@@ -1,17 +1,17 @@
 # **From genotype data to polygenic risk scores: a practical end-to-end guide for researchers without bioinformatics training**
 
-### **Author: van Zanten, E.S.**
+**Author: van Zanten, E.S.**
 
 
-### **This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with QC steps:** 
-### **1.1 Lenient variant filtering**
-### **1.2 Sample filtering** 
-### **1.3 Sex concordance** 
-### **1.4 Preliminary PCA and heterozygosity**
-### **1.5 Relatedness**
-### **1.6 Strict variant filtering** 
-### **1.7 Hardy-Weinberg**
-### **1.8 MAF**
+**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with QC steps:** 
+**1.1 Lenient variant filtering**
+**1.2 Sample filtering** 
+**1.3 Sex concordance** 
+**1.4 Preliminary PCA and heterozygosity**
+**1.5 Relatedness**
+**1.6 Strict variant filtering** 
+**1.7 Hardy-Weinberg**
+**1.8 MAF**
 
 
 ### Preparation 
@@ -48,7 +48,6 @@ cat "$PHENO" | head -n 2
 |Sample ID|FID|IID|Status|Sex|Age
 |---------|---|---|------|---|---|
 |00000301 |00000301_2-375928.CEL|00000301_2-375928.CEL|Case|FEMALE|60|
-|---------|---------------------|---------------------|----|------|--|
 |00000305 |00000305_2-362470.CEL|00000305_2-362470.CEL|Case|MALE  |53|
 
 
@@ -61,7 +60,9 @@ A VCF is often gzipped (compressed; ending in .gz) since it is very large, and i
 bcftools view -H "$VCF" | head -n 1
 ```
 This skips the header (-H), and shows the data for the first variant. For readability, we just paste the genotypes of the first 15 individuals:
-1       86028   AX-13216142     T       C       .       .       PR              GT      0/0     0/0     0/0     0/0     0/0     0/0     0/0     0/0       0/1     0/0     0/0     0/0     0/0     0/0     0/0              
+|CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|
+|-----|---|--|---|---|----|------|----|------|
+1     |  86028  | AX-13216142   |  T  |     C    |   .   |    .     |  PR        |      GT  |    0/0     0/0     0/0     0/0     0/0     0/0     0/0     0/0       0/1     0/0     0/0     0/0     0/0     0/0     0/0              
 
 Per column:  
 1: chromosome  
@@ -85,7 +86,8 @@ Now we check what kinds of variants, and how many, we have.
 bcftools stats "$VCF"
 ```
 This prints a lot of interesting data. For us, the first table is most relevant since it is a summary:  
-# SN    [2]id   [3]key  [4]value  
+|SN|[2]id|[3]key|[4]value|  
+|--|-----|------|--------|
 SN      0       number of samples:      986  
 SN      0       number of records:      864725  
 SN      0       number of no-ALTs:      144311  
