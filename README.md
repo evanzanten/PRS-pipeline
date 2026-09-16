@@ -3,16 +3,16 @@
 **Author: van Zanten, E.S.**
 
 
-**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with QC steps:** 
-**1.1 Lenient variant filtering**
-**1.2 Sample filtering** 
-**1.3 Sex concordance** 
-**1.4 Preliminary PCA and heterozygosity**
-**1.5 Relatedness**
-**1.6 Strict variant filtering** 
-**1.7 Hardy-Weinberg**
-**1.8 MAF**
-
+**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with QC steps:**  
+**1.1 Lenient variant filtering**  
+**1.2 Sample filtering**   
+**1.3 Sex concordance**   
+**1.4 Preliminary PCA and heterozygosity**  
+**1.5 Relatedness**  
+**1.6 Strict variant filtering**   
+**1.7 Hardy-Weinberg**  
+**1.8 MAF**  
+  
 
 ### Preparation 
 
@@ -59,10 +59,10 @@ A VCF is often gzipped (compressed; ending in .gz) since it is very large, and i
 ```
 bcftools view -H "$VCF" | head -n 1
 ```
-This skips the header (-H), and shows the data for the first variant. For readability, we just paste the genotypes of the first 15 individuals:
+This skips the header (-H), and shows the data for the first variant. For readability, we just paste the genotypes of the first 4 individuals:
 |CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|
 |-----|---|--|---|---|----|------|----|------|
-1     |  86028  | AX-13216142   |  T  |     C    |   .   |    .     |  PR        |      GT  |    0/0     0/0     0/0     0/0     0/0     0/0     0/0     0/0       0/1     0/0     0/0     0/0     0/0     0/0     0/0              
+1     |  86028  | AX-13216142   |  T  |     C    |   .   |    .     |  PR        |      GT  |    0/0     0/0     0/0     0/0 |             
 
 Per column:  
 1: chromosome  
@@ -88,15 +88,15 @@ bcftools stats "$VCF"
 This prints a lot of interesting data. For us, the first table is most relevant since it is a summary:  
 |SN|[2]id|[3]key|[4]value|  
 |--|-----|------|--------|
-SN      0       number of samples:      986  
-SN      0       number of records:      864725  
-SN      0       number of no-ALTs:      144311  
-SN      0       number of SNPs: 720414  
-SN      0       number of MNPs: 0  
-SN      0       number of indels:       0  
-SN      0       number of others:       0  
-SN      0       number of multiallelic sites:   0  
-SN      0       number of multiallelic SNP sites:       0  
+SN |     0  |     number of samples:   |   986  |
+SN |    0    |   number of records:     | 864725 | 
+SN  |    0    |   number of no-ALTs:     | 144311 | 
+SN   |   0     |number of SNPs: |720414  |
+SN     | 0     |  number of MNPs:| 0  |
+SN      |0      | number of indels:|       0|  
+SN      |0       |number of others: |      0 | 
+SN      |0       |number of multiallelic sites:|   0|  
+SN      |0       |number of multiallelic SNP sites:  |     0  |
 
 So we have 986 individuals and 864,725 variants, all of them SNPs. The 144,311 "no-ALTs" are SNPs at which everybody in our cohort turned out to have the same genotype, so only one allele was ever seen.
 
@@ -104,59 +104,24 @@ So we have 986 individuals and 864,725 variants, all of them SNPs. The 144,311 "
 ```
   awk -F'\t' 'NR==1 {print "#FID\tIID\tSEX\tPHENO"; next}
               {p = ($4=="Case") ? 2 : ($4=="Control") ? 1 : "NA"
-               print $2"\t"$3"\t"$5"\t"p}' "$PHENO" > sex_pheno.txt  
+               print $2"\t"$3"\t"$5"\t"p}' "$PHENO" > sex_pheno.txt
 
+
+   Now we can use PLINK. Remember to specify the threads and the output directory we put in our configuration! 
+     plink2 --vcf "$VCF" --double-id \
+         --update-sex sex_pheno.txt \
+         --pheno sex_pheno.txt --pheno-name PHENO \
+         --threads "$THREADS" --make-bed --out "$OUT/first_step"
+
+```
+What does the result look like?: PLINK tells you what it managed to attach.
+For us:
+```
+1 binary phenotype loaded (513 cases, 473 controls).
+--update-sex: 986 samples updated.
 ```
 
 
-
-  #First we rewrite the phenotype file into the two columns PLINK expects.
-  #
-
-  plink2 --vcf "$VCF" --double-id \
-         --update-sex sex_pheno.txt \
-         --pheno sex_pheno.txt --pheno-name PHENO \
-         --threads $THREADS --make-bed --out 00_all
-
-  #What does the result look like?: PLINK tells you what it managed to attach.
-  #For us:
-#  1 binary phenotype loaded (513 cases, 473 controls).
-#  --update-sex: 986 samples updated.
-
-  #Note that 986 is less than the 1019 samples in the VCF. The 33 that were not
-  #updated are the subject of the next step.
-
-
-###REMOVE SAMPLES THAT ARE NOT STUDY PARTICIPANTS###
-#Genotyping arrays are usually run with reference DNA on every plate as a
-#quality control for the lab, and those wells are delivered to you along with
-#your own samples. Ours are CEPH1463-02 and the GIAB sample NA24385.
-#
-#They have to go before anything else, because they are not people in the study
-#and they break three later steps: many copies of one DNA look like a large set
-#of duplicate pairs in the kinship step (3.4), they form their own tight
-#clusters in the preliminary PCA (3.3), and they have no reported sex to check
-#(3.2) or case/control status to use (3.6).
-#
-#The phenotype file is what defines the cohort, so we keep the samples that
-#appear in it and report anything genotyped that does not.
-
-awk 'NR>1 {print $1"\t"$2}' sex_pheno.txt > 00_participants.txt
-
-#What is in the genotype data but not in the phenotype file?
-awk 'NR==FNR {p[$2]; next} !($2 in p) {print $2}' \
-    00_participants.txt 00_all.fam > 00_non_participants.txt
-
-cat 00_non_participants.txt
-
-#For us this lists 33 samples, all of them named after one of the two control
-#DNAs. If anything appears here that you do not recognise, stop and find out
-#what it is before going on: it means the genotypes and the phenotype file
-#disagree about who is in the study.
-
-plink2 --bfile 00_all --keep 00_participants.txt --threads $THREADS --make-bed --out 00_raw
-
-#We now have 986 samples and 864,725 variants.
 
 
 ###MISSINGNESS STATISTICS###
