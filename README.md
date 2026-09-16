@@ -29,16 +29,6 @@ THREADS=4
 
 
 
-###Reference Data###
-#For 1000 genomes:
-#VCF: https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/
-#Beagle VCF: https://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes_phase3_v5a/b37.vcf/
-#Pedigree file: https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/working/20130606_sample_info/20130606_g1k.ped
-#FASTA files: https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/human_g1k_v37.fasta.gz
-#Legend file (for Beagle): https://www.chg.ox.ac.uk/~wrayner/tools/1000GP_Phase3_combined.legend.gz
-#Map file (for Beagle): https://bochet.gcc.biostat.washington.edu/beagle/genetic_maps/plink.GRCh37.map.zip
-
-
 ###QUALITY CONTROL STEPS###
 #Throughout this pipeline, we will be working with SNP array data derived from ~1020 Brazilian individuals, of which we have 513 cases (stroke), and 473 controls.
 
