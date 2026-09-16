@@ -44,45 +44,45 @@ Let's start by inspecting our VCF file and the phenotype data, just to get an id
 1. First inspect the phenotype data. We do not want to print the entire file, just the first two lines of the beginning of the file is enough (head -n 2 does this) 
 ```
 cat "$PHENO" | head -n 2
-
+```
 #  Sample ID   FID                     IID                     Status   Sex      Age
 #  00000301    00000301_2-375928.CEL   00000301_2-375928.CEL   Case     FEMALE   60
 #  00000305    00000305_2-362470.CEL   00000305_2-362470.CEL   Case     MALE     53
-```
+
 
 In our case, the FID (family ID) and IID (individual ID) are the same, since we do not have families in our cohort to our knowledge (spoiler: later in the pipeline, we will find out we do have relatives). The first two individuals are both cases, one is male (aged 53) and one is female (aged 60). 
 
 2. Let's also inspect what the VCF looks like, and what types of variants our VCF contains.
+A VCF is often gzipped (compressed; ending in .gz) since it is very large, and it has a long header that contains specifics on the genotypes (e.g. build, how the VCF was derived). Since we just want to inspect the data itself, we therefore have to use a different command than for the phenotyping file, and BCFtools is designed to do this.
 
 ```
-#Inspect the VCF. A VCF is often gzipped (compressed; ending in .gz) since it is very large, and it has a long header that contains specifics on the genotypes (e.g. build, how the VCF was derived). Since we just want to inspect the data itself, we therefore have to use a different command than for the phenotyping file, and BCFtools is designed to do this.
-
 bcftools view -H "$VCF" | head -n 1
-
-#This skips the header (-H), and shows the data for the first variant. For readability, we just paste the genotypes of the first 15 individuals:
+```
+This skips the header (-H), and shows the data for the first variant. For readability, we just paste the genotypes of the first 15 individuals:
 1       86028   AX-13216142     T       C       .       .       PR              GT      0/0     0/0     0/0     0/0     0/0     0/0     0/0     0/0       0/1     0/0     0/0     0/0     0/0     0/0     0/0              
 
-#Per column:
-#1: chromosome
-#86028: position on the chromosome
-#AX-13216142: variant ID (in our case, the Axiom assay probe name, not an rsID)
-#T: reference allele
-#C: alternative allele
-#.: quality score (empty, since SNP arrays don't give one)
-#.: filter status (empty, no filters applied)
-#PR: extra information: here a flag that the reference allele is provisional, we will check this later on in the pipeline
-#GT: format of the sample columns: they hold genotypes (GT)
+Per column:
+1: chromosome
+86028: position on the chromosome
+AX-13216142: variant ID (in our case, the Axiom assay probe name, not an rsID)
+T: reference allele
+C: alternative allele
+.: quality score (empty, since SNP arrays don't give one)
+.: filter status (empty, no filters applied)
+PR: extra information: here a flag that the reference allele is provisional, we will check this later on in the pipeline
+GT: format of the sample columns: they hold genotypes (GT)
 
-#Genotypes are then counted as follows:
-#0/0: two reference alleles (T/T)
-#0/1: one reference, one alternative allele (T/C)
-#1/1: two alternative alleles (C/C)
-#./.: missing, the array failed to call it
+Genotypes are then counted as follows:
+0/0: two reference alleles (T/T)
+0/1: one reference, one alternative allele (T/C)
+1/1: two alternative alleles (C/C)
+./.: missing, the array failed to call it
 
-#Now we check what kinds of variants, and how many, we have.
+Now we check what kinds of variants, and how many, we have.
+```
 bcftools stats "$VCF"
-
-#This prints a lot of interesting data. For us, the first table is most relevant since it is a summary:
+```
+This prints a lot of interesting data. For us, the first table is most relevant since it is a summary:
 # SN    [2]id   [3]key  [4]value
 SN      0       number of samples:      986
 SN      0       number of records:      864725
@@ -94,26 +94,20 @@ SN      0       number of others:       0
 SN      0       number of multiallelic sites:   0
 SN      0       number of multiallelic SNP sites:       0
 
-  #So we have 986 individuals and 864,725 variants, all of them SNPs. The
-  #144,311 "no-ALTs" are SNPs at which everybody in our cohort turned out to
-  #have the same genotype, so only one allele was ever seen.
+So we have 986 individuals and 864,725 variants, all of them SNPs. The 144,311 "no-ALTs" are SNPs at which everybody in our cohort turned out to have the same genotype, so only one allele was ever seen.
 
-3. We now rewrite the phenotype file into the two columns expected by PLINK. 
+3. We now rewrite the phenotype file into the two columns expected by PLINK. PLINK reads sex as 1 for male and 2 for female, but also accepts the words, so MALE and FEMALE can be passed through unchanged. Case/control status has to become 2 for a case and 1 for a control, which is the part people get backwards most often. Change the column numbers if your file is laid out differently: below, $2 is FID, $3 is IID, $4 is the status and $5 is the sex.
+```
+  awk -F'\t' 'NR==1 {print "#FID\tIID\tSEX\tPHENO"; next}
+              {p = ($4=="Case") ? 2 : ($4=="Control") ? 1 : "NA"
+               print $2"\t"$3"\t"$5"\t"p}' "$PHENO" > sex_pheno.txt  
 
 ```
 
 
 
   #First we rewrite the phenotype file into the two columns PLINK expects.
-  #PLINK reads sex as 1 for male and 2 for female, but also accepts the words,
-  #so MALE and FEMALE can be passed through unchanged. Case/control status has
-  #to become 2 for a case and 1 for a control, which is the part people get
-  #backwards most often. Change the column numbers if your file is laid out
-  #differently: below, $2 is FID, $3 is IID, $4 is the status and $5 is the sex.
-
-  awk -F'\t' 'NR==1 {print "#FID\tIID\tSEX\tPHENO"; next}
-              {p = ($4=="Case") ? 2 : ($4=="Control") ? 1 : "NA"
-               print $2"\t"$3"\t"$5"\t"p}' "$PHENO" > sex_pheno.txt
+  #
 
   plink2 --vcf "$VCF" --double-id \
          --update-sex sex_pheno.txt \
