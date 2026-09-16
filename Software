@@ -1,0 +1,18 @@
+###SOFTWARE NEEDED###
+#R (see https://cran.r-project.org/), within R we need dplyr and ggplot2.
+#PLINK 1.9 (see https://www.cog-genomics.org/plink/)
+#PLINK 2 (see https://www.cog-genomics.org/plink/2.0/)
+#BCFtools (see http://samtools.github.io/bcftools/)
+#Java (see https://www.oracle.com/java/technologies/downloads/)
+#Beagle (see http://faculty.washington.edu/browning/beagle/)
+#Minimac4 (see https://github.com/statgen/Minimac4)
+
+#Note that PLINK 1.9 and PLINK 2 are different programs and we need both. They
+#are installed as 'plink' and 'plink2' respectively. Most steps below use
+#plink2 because it is much faster, but the sex check only exists in PLINK 1.9.
+
+  ##PRS Software##
+  #PRS-CS
+  #PRSice-2
+  #LDPRed2
+  #BridgePRS
