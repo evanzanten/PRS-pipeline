@@ -1,60 +1,66 @@
-# Genotype quality control - protocol paper sections 3.1 to 3.7
-#
-# Runs the QC steps in the order described in the paper: variant and sample
-# missingness (3.1), sex concordance (3.2), preliminary PCA and heterozygosity
-# (3.3), relatedness (3.4), strict variant missingness (3.5), Hardy-Weinberg
-# (3.6) and minor allele frequency (3.7).
-#
-# Usage:  bash qc.sh
-#
-# Keep qc.sh and figures.R in the same folder, and run it from that folder:
-# the script writes its output into whatever directory you start it in.
-#
+# **From genotype data to polygenic risk scores: a practical end-to-end guide for researchers without bioinformatics training**
 
-#Stop at the first command that fails. Without this, one failed step is
-#followed by a dozen confusing errors from every step that needed its output.
-set -e
+## **Author: van Zanten, E.S.**
 
 
-####PREPARATION####
-#For reproducibility, we assign a seed. This means that in steps where randomization is applied, we will get the same results every time we run the script.
+### **This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with QC steps:** 
+### **1.1 Lenient variant filtering**
+### **1.2 Sample filtering** 
+### **1.3 Sex concordance** 
+### **1.4 Preliminary PCA and heterozygosity**
+### **1.5 Relatedness**
+### **1.6 Strict variant filtering** 
+### **1.7 Hardy-Weinberg**
+### **1.8 MAF**
+
+
+### Preparation 
+
+1. Software, data and programming languages
+   Make sure you have the software needed for this pipeline downloaded, see [insert singularity container and point to table]. The coding itself is done in bash, and we make the figures in R [version]. For several of the QC and PRS steps, we need to download genetic data of a reference panel. To choose the right reference panel, we refer to our paper section 4.1.
+
+2. Input data
+   This pipeline is built for SNP array data, although some of the steps are also relevant for whole exome sequencing (WES) and whole genome sequencing (WGS). For full WES and WGS pipelines, we recommend using [insert good QC papers]. In our case, we use SNP array data in a variant call format (VCF) file. Our data is derived from a stroke GWAS in 986 Brazilian individuals (513 cases, 473 controls).
+
+3. Configuration
+   In many scripts, values are often set multiple times throughout the script, and it is often easier and cleaner to assign these values at the beginning of the script so that if you change the values, you only have to do that once at the beginning of the script. Throughout this pipeline, we assign multiple variables to values:
+   *  For reproducibility, we assign a seed. This means that in steps where randomization is applied, we will get the same results every time we run the script.
+   *  When working on computing clusters, it is advisable to set the number of CPU cores that PLINK may use, since if you do not do this, PLINK will attempt to use all available cores on a node, which may exceed your allocated resources. As a default, we will use 4 threads.
+   *  We also specify the output path that will be used to put all the results in, and the input VCF and metadata (for us, the phenotype textfile that states whether each individual is a case or a control, and what their age and sex is)
+
+```
 SEED=1
-
-#How many processor cores PLINK may use. Left to itself PLINK takes every core
-#it can see, which is fine on your own machine but a bad idea on a shared
-#server: it slows the machine down for everyone else, and on a login node it
-#will often be refused outright and stop with
-#"libgomp: Thread creation failed". Four is plenty for a cohort of this size.
 THREADS=4
+OUT_PATH=/path_to_output/
+VCF=/path_to_vcf/genotypes.vcf.gz
+PHENO=/path_to_metadata/phenotypes.txt
+```
 
 
+### Inspecting your data
 
-###QUALITY CONTROL STEPS###
-#Throughout this pipeline, we will be working with SNP array data derived from ~1020 Brazilian individuals, of which we have 513 cases (stroke), and 473 controls.
+Let's start by inspecting our VCF file and the phenotype data, just to get an idea of what each file looks like. Since we specified the paths to those files above, we just have to reference to them in this step. 
 
-#We start with a VCF file containing genotypes of all individuals. We also have a phenotype textfile that states whether each individual is a case or a control, and what their age and sex is.
-
-#First make a variable of these two files. These are the only two lines in this
-#script that you need to change to run it on your own data:
-
-VCF=genotypes.vcf.gz
-PHENO=phenotypes.txt
-
-#The phenotype file is expected to be tab-separated with a header line, and to
-#have the sample identifier, the case/control status and the sex somewhere in
-#it. Ours looks like this, and the column numbers used further down refer to it:
+1. First inspect the phenotype data. We do not want to print the entire file, just the first two lines of the beginning of the file is enough (head -n 2 does this) 
+```
+cat "$PHENO" | head -n 2
 
 #  Sample ID   FID                     IID                     Status   Sex      Age
 #  00000301    00000301_2-375928.CEL   00000301_2-375928.CEL   Case     FEMALE   60
 #  00000305    00000305_2-362470.CEL   00000305_2-362470.CEL   Case     MALE     53
+```
 
-#Our plots are drawn by figures.R, which sits next to this script. It needs to
-#know where to find the PLINK output and where to put the plots:
+In our case, the FID (family ID) and IID (individual ID) are the same, since we do not have families in our cohort to our knowledge (spoiler: later in the pipeline, we will find out we do have relatives). The first two individuals are both cases, one is male (aged 53) and one is female (aged 60). 
 
-export OUT=.
-export FIG=figures
-mkdir -p "$FIG"
+2. Let's also inspect what the VCF looks like, and what types of variants our VCF contains.
 
+```
+#Inspect the VCF. A VCF is often gzipped (compressed; ending in .gz) since it is very large, and it has a long header that contains specifics on the genotypes (e.g. build, how the VCF was derived). Since we just want to inspect the data itself, we therefore have to use a different command than for the phenotyping file, and BCFtools is designed to do this.
+
+bcftools view -H "$VCF" | head -n 1
+
+#This skips the header (-H), and shows the data for the first variant. 
+```
 
 #Preliminary steps:
 
