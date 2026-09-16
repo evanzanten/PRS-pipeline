@@ -60,7 +60,7 @@ A VCF is often gzipped (compressed; ending in .gz) since it is very large, and i
 bcftools view -H "$VCF" | head -n 1
 ```
 This skips the header (-H), and shows the data for the first variant. For readability, we just paste the genotypes of the first 4 individuals:
-|CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|
+|CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|         |
 |-----|---|--|---|---|----|------|----|------|
 1     |  86028  | AX-13216142   |  T  |     C    |   .   |    .     |  PR        |      GT  |    0/0     0/0     0/0     0/0 |             
 
