@@ -146,130 +146,82 @@ We are now left with 978 samples and 863477 variants.
 
 
 ### 1.2 Sex concordance 
+We now check that the sex recorded in the phenotype file matches the sex we can read off the genotypes. A mismatch usually means a sample was swapped somewhere between the clinic and the plate, and a swapped sample carries the wrong phenotype, so it has to go. The check works on the X chromosome. Males have one copy and so cannot be heterozygous on it; females have two and are heterozygous at many positions.
+PLINK summarises this as an inbreeding coefficient F, which lands near 1 for males and near 0 for females. Below we call F < 0.2 female and F > 0.8 male, and treat anything in between as ambiguous.
+Note that this step can only be done in PLINK 1.9 (not PLINK 2, where --check-sex does not exist). 
+```
+plink --bfile "$OUT/sample_missingn" --check-sex 0.2 0.8 --out "$OUT/sexcheck"
 
+```
+What does the result look like? 
+One line per sample, with the reported sex (PEDSEX), the sex read from the genotypes (SNPSEX), and STATUS saying OK or
+PROBLEM. For us the first line is:
+|FID|                     IID |                    PEDSEX|  SNPSEX|  STATUS  | F|
+|---|---|---|---|---|---|
+00000301_2-375928.CEL |  00000301_2-375928.CEL  | 2   |    1   |    PROBLEM | 0.9987
 
-###SEX CONCORDANCE###
-#We now check that the sex recorded in the phenotype file matches the sex we can
-#read off the genotypes. A mismatch usually means a sample was swapped somewhere
-#between the clinic and the plate, and a swapped sample carries the wrong
-#phenotype, so it has to go.
-#
-#The check works on the X chromosome. Males have one copy and so cannot be
-#heterozygous on it; females have two and are heterozygous at many positions.
-#PLINK summarises this as an inbreeding coefficient F, which lands near 1 for
-#males and near 0 for females. Below we call F < 0.2 female and F > 0.8 male,
-#and treat anything in between as ambiguous.
-#
-#This is the one step that needs PLINK 1.9: --check-sex does not exist in PLINK 2.
+Plot a histogram of F, with the two cutoffs marked. In a clean cohort you see two tight groups, one at each end, and almost nothing in the middle.  
+<img src="figures/sex_fstat.png" alt="Sex check F statistic" width="400">
 
-plink --bfile 03_sample_missingness --check-sex 0.2 0.8 --out 04_sexcheck
+Remove the samples flagged PROBLEM. For us, this removed 50 samples, leaving 928. That is about 5%, which is more than you would like to see: 32 samples reported male came out female and 14 reported female came out male. A rate this symmetric points at labelling rather than at the DNA, so it is worth asking whoever prepared the plates before you accept it. We remove them either way, just to be absolutely sure our data is clean for the next steps. 
+```
+We first use awk to create a textfile with the samples that need to be removed. NR>1 is used to skip the first line (the header), then we filter for those rows where column 5 contains "PROBLEM" ($5=="PROBLEM") and print column 1 (FID) and column 2 (IID), separated by a tab ({print $1"\t"$2})
+awk 'NR>1 && $5=="PROBLEM" {print $1"\t"$2}' "$OUT/sexcheck.sexcheck" > "$OUT/to_be_removed_sex.txt"
 
-#What does the result look like?: one line per sample, with the reported sex
-#(PEDSEX), the sex read from the genotypes (SNPSEX), and STATUS saying OK or
-#PROBLEM. For us the first line is:
-#  FID                     IID                     PEDSEX  SNPSEX  STATUS   F
-#  00000301_2-375928.CEL   00000301_2-375928.CEL   2       1       PROBLEM  0.9987
+We then tell plink that it should remove those samples that we just generated the textfile for, from our data
+plink2 --bfile "$OUT/sample_missingness" --remove "$OUT/to_be_removed_sex.txt" --threads $THREADS --make-bed --out "$OUT/sex_check_finished"
 
-#Plot a histogram of F, with the two cutoffs marked. In a clean cohort you see
-#two tight groups, one at each end, and almost nothing in the middle.
-Rscript figures.R sex
+Since in our data, we removed 50 samples, we end up with 928 individuals. 
+```
 
-#Remove the samples flagged PROBLEM. The $3!=0 guard skips samples with no
-#reported sex, which cannot be checked against anything (there should be none
-#left now that the control DNAs have been dropped).
-awk 'NR>1 && $5=="PROBLEM" && $3!=0 {print $1"\t"$2}' 04_sexcheck.sexcheck > 04_sex_remove.txt
+### 1.3 Preliminary PCA and heterozygosity 
+Heterozygosity is the fraction of a person's genotypes that carry two different alleles. Too high suggests the sample is a mixture of two DNAs, and too low suggests inbreeding or a degraded sample. Either way it is a sign of a sample we should not trust. However, the 'normal' amount of heterozygosity differs enormously between ancestry groups, so in an admixed cohort like ours, comparing everybody to the mean heterozygosity rates of the entire cohort would flag whole ancestry groups instead of just bad samples. This is why, for cross-ancestry or admixed cohorts, it is advisable to perform a PCA to split the cohort into broad ancestry clusters, then within each cluster we remove individuals more than 3 standard deviations away from that cluster's mean heterozygosity. For relatively homogeneous cohorts such as European cohorts, you can skip the PCA step and directly compute the heterozygosity rates for the entire cohort. 
 
-plink2 --bfile 03_sample_missingness --remove 04_sex_remove.txt --threads $THREADS --make-bed --out 05_sex_ok
+**Principal Component Analysis**  
+We perform a PCA to do a rough separation of our cohort into clusters (see the paper to get a full description of how this step works). PCA needs variants that are roughly independent of one another, so we first prune for linkage disequilibrium. We also drop the long-range LD regions of Price et al. (2008), a short list of places in the genome where correlations stretch so far that they dominate the top components and swamp the ancestry signal we are after. Those coordinates are on build GRCh37, so check the build of your own data before using them. See the file high_ld_b37.txt to get a list of these regions. 
 
-#For us this removed 50 samples, leaving 928. That is about 5%, which is more
-#than you would like to see: 32 samples reported male came out female and 14
-#reported female came out male. A rate this symmetric points at labelling rather
-#than at the DNA, so it is worth asking whoever prepared the plates before you
-#accept it. We remove them either way, because we cannot tell which of the two
-#records is the wrong one.
+```
+In the following command, we use plink to:  
+- Prune (drop) one of every correlated variant pairs at r2 > 0.2, using a sliding window the size of 200 variants, and steps of 50 variants. We restrict our pruning to the autosomes and common (MAF > 0.05) variants  
+- Remove the regions that we specified in the high_ld_b37.txt file, from the Price et al. (2008) paper.   
 
-
-###PRELIMINARY PCA AND HETEROZYGOSITY###
-#Heterozygosity is the fraction of a person's genotypes that carry two different
-#alleles. Too high suggests the sample is a mixture of two DNAs; too low
-#suggests inbreeding or a degraded sample. Either way it is a sign of a sample
-#we should not trust.
-#
-#The catch is that the normal amount of heterozygosity differs between ancestry
-#groups, so in a cohort like ours, which is admixed, comparing everybody to one
-#cohort-wide average would flag whole ancestry groups instead of bad samples.
-#So we do it in two parts:
-#
-#  1. Compute a PCA to split the cohort into broad ancestry clusters
-#  2. Within each cluster, remove individuals more than 3 SD from that
-#     cluster's own mean heterozygosity
-#
-#PCA needs variants that are roughly independent of one another, so we first
-#prune for linkage disequilibrium. We also drop the long-range LD regions of
-#Price et al. (2008), a short list of places in the genome where correlations
-#stretch so far that they dominate the top components and swamp the ancestry
-#signal we are after. Those coordinates are on build GRCh37, so check the build
-#of your own data before using them.
-
-cat > high_ld_b37.txt <<'REGIONS'
-1	48000000	52000000	highLD1
-2	86000000	100500000	highLD2
-2	134500000	138000000	highLD3
-2	183000000	190000000	highLD4
-3	47500000	50000000	highLD5
-3	83500000	87000000	highLD6
-3	89000000	97500000	highLD7
-5	44500000	50500000	highLD8
-5	98000000	100500000	highLD9
-5	129000000	132000000	highLD10
-5	135500000	138500000	highLD11
-6	25000000	35000000	highLD12
-6	57000000	64000000	highLD13
-6	140000000	142500000	highLD14
-7	55000000	66000000	highLD15
-8	7000000	13000000	highLD16
-8	43000000	50000000	highLD17
-8	112000000	115000000	highLD18
-10	37000000	43000000	highLD19
-11	46000000	57000000	highLD20
-11	87500000	90500000	highLD21
-12	33000000	40000000	highLD22
-12	109500000	112000000	highLD23
-20	32000000	34500000	highLD24
-REGIONS
-
-#--indep-pairwise 200 50 0.2 slides a 200-variant window along the genome in
-#steps of 50, and within each window drops one of every pair correlated at
-#r2 > 0.2. We also restrict to the autosomes and to common variants.
-
-plink2 --bfile 05_sex_ok --autosome --maf 0.05 \
+plink2 --bfile "$OUT/sex_check_finished" --autosome --maf 0.05 \
        --exclude bed1 high_ld_b37.txt \
-       --indep-pairwise 200 50 0.2 --threads $THREADS --out 06_prune
+       --indep-pairwise 200 50 0.2 --threads $THREADS --out pruned_longrange_ld
 
-#This left us with 109,774 variants out of 863,477, written to 06_prune.prune.in.
+This left us with 109,774 variants out of 863,477, written to pruned_longrange_ld.prune.in.
+```
 
-#Only the first two components are needed here. We want a coarse split into
-#broad groups, not an ancestry assignment (that is section 3.9).
-#
-#'approx' is PLINK's randomised algorithm. PLINK will warn you that it is only
-#recommended above 5000 samples, and we have fewer, but the exact algorithm
-#takes over ten minutes on a cohort this size while 'approx' takes seconds, and
-#the difference between them is far smaller than the width of the clusters we
-#are about to draw. Being randomised is why we set a seed at the top.
-plink2 --bfile 05_sex_ok --extract 06_prune.prune.in \
-       --pca 2 approx --seed $SEED --threads $THREADS --out 06_pca
+ We use only the first two principal components, since we want a coarse split into groups, not an ancestry assignment (we leave that for section 3.9). We use PLINK's randomised PCA algorithm (approx). PLINK recommends it only above 5,000 samples and we have fewer, but it is much faster than the exact algorithm, and the difference between the two is far smaller than the spread of the clusters, so it doesn't matter here. Because this algorithm is randomised, we use the seed set in the configuration step. We then calculate heterozygosity for every sample in one go. Each sample's heterozygosity depends only on its own genotypes, so it does not matter that we calculate it for the whole cohort at once. The clusters are used in the next step, where we compare each sample with the average of its own cluster rather than with the whole cohort.
 
-plink2 --bfile 05_sex_ok --extract 06_prune.prune.in --het --threads $THREADS --out 06_het
 
-#figures.R does the clustering, draws the PCA and the heterozygosity plots, and
-#writes the list of outliers to 06_het_outliers.txt.
-Rscript figures.R pca_het
+```
+plink2 --bfile "$OUT/sex_check_finished" --extract pruned_longrange_ld.prune.in \
+       --pca 2 approx --seed $SEED --threads $THREADS --out rough_pca
+
+plink2 --bfile "$OUT/sex_check_finished" --extract pruned_longrange_ld.prune.in --het --threads $THREADS --out full_cohort_het
+
+#figures.R does the clustering, draws the PCA and the heterozygosity plots, and writes the list of outliers to het_outliers.txt.
 
 #For us it found clusters of 626, 243 and 59 individuals, and flagged 14 outliers.
 
-plink2 --bfile 05_sex_ok --remove 06_het_outliers.txt --threads $THREADS --make-bed --out 07_het_ok
+plink2 --bfile "$OUT/sex_check_finished" --remove het_outliers.txt --threads $THREADS --make-bed --out het_finished
 
 #Leaving 914 samples.
+```
+  <table>
+    <tr>
+      <td><img src="figures/pca_clusters.png" alt="PCA clusters"
+  width="100%"></td>
+      <td><img src="figures/heterozygosity.png" alt="Heterozygosity per cluster"
+  width="100%"></td>
+    </tr>
+    <tr>
+      <td align="center"><em>PC1 and PC2, coloured by cluster</em></td>
+      <td align="center"><em>Heterozygosity rate per cluster</em></td>
+    </tr>
+  </table>
+
 
 
 ###KINSHIP ESTIMATION###
