@@ -1,6 +1,6 @@
 # **From genotype data to polygenic risk scores: a practical end-to-end guide for researchers without bioinformatics training**
 
-## **Author: van Zanten, E.S.**
+### **Author: van Zanten, E.S.**
 
 
 ### **This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with QC steps:** 
@@ -16,13 +16,13 @@
 
 ### Preparation 
 
-1. Software, data and programming languages  
+1. **Software, data and programming languages**  
    Make sure you have the software needed for this pipeline downloaded, see [insert singularity container and point to table]. The coding itself is done in bash, and we make the figures in R [version]. For several of the QC and PRS steps, we need to download genetic data of a reference panel. To choose the right reference panel, we refer to our paper section 4.1.
 
-2. Input data  
+2. **Input data**  
    This pipeline is built for SNP array data, although some of the steps are also relevant for whole exome sequencing (WES) and whole genome sequencing (WGS). For full WES and WGS pipelines, we recommend using [insert good QC papers]. In our case, we use SNP array data in a variant call format (VCF) file. Our data is derived from a stroke GWAS in 986 Brazilian individuals (513 cases, 473 controls).
 
-3. Configuration  
+3. **Configuration**  
    In many scripts, values are often set multiple times throughout the script, and it is often easier and cleaner to assign these values at the beginning of the script so that if you change the values, you only have to do that once at the beginning of the script. Throughout this pipeline, we assign multiple variables to values:  
    *  For reproducibility, we assign a seed. This means that in steps where randomization is applied, we will get the same results every time we run the script.  
    *  When working on computing clusters, it is advisable to set the number of CPU cores that PLINK may use, since if you do not do this, PLINK will attempt to use all available cores on a node, which may exceed your allocated resources. As a default, we will use 4 threads.  
@@ -59,42 +59,50 @@ In our case, the FID (family ID) and IID (individual ID) are the same, since we 
 
 bcftools view -H "$VCF" | head -n 1
 
-#This skips the header (-H), and shows the data for the first variant. 
+#This skips the header (-H), and shows the data for the first variant. For readability, we just paste the genotypes of the first 15 individuals:
+1       86028   AX-13216142     T       C       .       .       PR              GT      0/0     0/0     0/0     0/0     0/0     0/0     0/0     0/0       0/1     0/0     0/0     0/0     0/0     0/0     0/0              
+
+#Per column:
+#1: chromosome
+#86028: position on the chromosome
+#AX-13216142: variant ID (in our case, the Axiom assay probe name, not an rsID)
+#T: reference allele
+#C: alternative allele
+#.: quality score (empty, since SNP arrays don't give one)
+#.: filter status (empty, no filters applied)
+#PR: extra information: here a flag that the reference allele is provisional, we will check this later on in the pipeline
+#GT: format of the sample columns: they hold genotypes (GT)
+
+#Genotypes are then counted as follows:
+#0/0: two reference alleles (T/T)
+#0/1: one reference, one alternative allele (T/C)
+#1/1: two alternative alleles (C/C)
+#./.: missing, the array failed to call it
+
+#Now we check what kinds of variants, and how many, we have.
+bcftools stats "$VCF"
+
+#This prints a lot of interesting data. For us, the first table is most relevant since it is a summary:
+# SN    [2]id   [3]key  [4]value
+SN      0       number of samples:      986
+SN      0       number of records:      864725
+SN      0       number of no-ALTs:      144311
+SN      0       number of SNPs: 720414
+SN      0       number of MNPs: 0
+SN      0       number of indels:       0
+SN      0       number of others:       0
+SN      0       number of multiallelic sites:   0
+SN      0       number of multiallelic SNP sites:       0
+
+  #So we have 986 individuals and 864,725 variants, all of them SNPs. The
+  #144,311 "no-ALTs" are SNPs at which everybody in our cohort turned out to
+  #have the same genotype, so only one allele was ever seen.
+
+3. We now rewrite the phenotype file into the two columns expected by PLINK. 
+
 ```
 
-#Preliminary steps:
 
-  #1. First, we inspect the raw data to see how many, and what types of variants we have.
-  bcftools stats "$VCF" > cohort_stats_preQC.txt
-
-  #What does the result look like?:
-  cat cohort_stats_preQC.txt
-
-  #For us, the first lines look like this:
-  # SN    [2]id   [3]key  [4]value
-#  SN      0       number of samples:      1019
-#  SN      0       number of records:      864725
-#  SN      0       number of no-ALTs:      144311
-#  SN      0       number of SNPs: 720414
-#  SN      0       number of MNPs: 0
-#  SN      0       number of indels:       0
-#  SN      0       number of others:       0
-#  SN      0       number of multiallelic sites:   0
-#  SN      0       number of multiallelic SNP sites:       0
-
-  #So we have 1019 individuals and 864,725 variants, all of them SNPs. The
-  #144,311 "no-ALTs" are SNPs at which everybody in our cohort turned out to
-  #have the same genotype, so only one allele was ever seen. They carry no
-  #information and will disappear at the allele frequency step (3.7).
-
-  #2. We convert the VCF into PLINK's own format, which every step after this
-  #one uses. At the same time we attach the reported sex and the case/control
-  #status, because these live in the phenotype file and not in the VCF. We need
-  #the sex for the concordance check (3.2) and the status for Hardy-Weinberg (3.6).
-
-  #PLINK identifies a sample by two names, a family ID and an individual ID,
-  #while a VCF has only one name per sample. --double-id copies the VCF name
-  #into both, which is the simplest thing to do when you have no family structure.
 
   #First we rewrite the phenotype file into the two columns PLINK expects.
   #PLINK reads sex as 1 for male and 2 for female, but also accepts the words,
