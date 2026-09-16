@@ -3,15 +3,14 @@
 **Author: van Zanten, E.S.**
 
 
-**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with QC steps:**  
-**1.1 Lenient variant filtering**  
-**1.2 Sample filtering**   
-**1.3 Sex concordance**   
-**1.4 Preliminary PCA and heterozygosity**  
-**1.5 Relatedness**  
-**1.6 Strict variant filtering**   
-**1.7 Hardy-Weinberg**  
-**1.8 MAF**  
+**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by these QC steps:**    
+**1.1 Variant and sample missingness**  
+**1.2 Sex concordance**   
+**1.3 Preliminary PCA and heterozygosity**  
+**1.4 Relatedness**  
+**1.5 Strict variant filtering**   
+**1.6 Hardy-Weinberg**  
+**1.7 MAF**  
   
 
 ### Preparation 
@@ -31,7 +30,7 @@
 ```
 SEED=1
 THREADS=4
-OUT_PATH=/path_to_output/
+OUT=/path_to_output/
 VCF=/path_to_vcf/genotypes.vcf.gz
 PHENO=/path_to_metadata/phenotypes.txt
 ```
@@ -60,8 +59,8 @@ A VCF is often gzipped (compressed; ending in .gz) since it is very large, and i
 bcftools view -H "$VCF" | head -n 1
 ```
 This skips the header (-H), and shows the data for the first variant. For readability, we just paste the genotypes of the first 4 individuals:
-|CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|         |
-|-----|---|--|---|---|----|------|----|------|
+|CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|           |
+|-----|---|--|---|---|----|------|----|------|-----------|
 1     |  86028  | AX-13216142   |  T  |     C    |   .   |    .     |  PR        |      GT  |    0/0     0/0     0/0     0/0 |             
 
 Per column:  
@@ -102,18 +101,20 @@ So we have 986 individuals and 864,725 variants, all of them SNPs. The 144,311 "
 
 3. We now rewrite the phenotype file into the two columns expected by PLINK. PLINK reads sex as 1 for male and 2 for female, but also accepts the words, so MALE and FEMALE can be passed through unchanged. Case/control status has to become 2 for a case and 1 for a control, which is the part people get backwards most often. Change the column numbers if your file is laid out differently: below, $2 is FID, $3 is IID, $4 is the status and $5 is the sex.
 ```
-  awk -F'\t' 'NR==1 {print "#FID\tIID\tSEX\tPHENO"; next}
-              {p = ($4=="Case") ? 2 : ($4=="Control") ? 1 : "NA"
-               print $2"\t"$3"\t"$5"\t"p}' "$PHENO" > sex_pheno.txt
+awk -F'\t' 'NR==1 {print "#FID\tIID\tSEX\tPHENO"; next}
+            {p = ($4=="Case") ? 2 : ($4=="Control") ? 1 : "NA"
+             print $2"\t"$3"\t"$5"\t"p}' "$PHENO" > sex_pheno.txt
 
 
-   Now we can use PLINK. Remember to specify the threads and the output directory we put in our configuration! 
-     plink2 --vcf "$VCF" --double-id \
-         --update-sex sex_pheno.txt \
-         --pheno sex_pheno.txt --pheno-name PHENO \
-         --threads "$THREADS" --make-bed --out "$OUT/first_step"
+Now we can use PLINK. Remember to specify the threads and the output directory we put in our configuration! 
+plink2 --vcf "$VCF" --double-id \
+       --update-sex sex_pheno.txt \
+       --pheno sex_pheno.txt --pheno-name PHENO \
+       --threads "$THREADS" --make-bed --out "$OUT/first_step"
+Here, we first refer to our VCF again, then tell PLINK that the IID and FID are the same. We then update the sex and phenotype status and specify the number of threads PLINK may use. We then generate PLINK files, including a BED, BIM and FAM file (see [insert link] for details on those filetypes). Here, we refer to our output directory for the first time. 
 
 ```
+
 What does the result look like?: PLINK tells you what it managed to attach.
 For us:
 ```
@@ -121,47 +122,30 @@ For us:
 --update-sex: 986 samples updated.
 ```
 
+### 1.1 Missingness
+Missingness is the fraction of genotypes that the array failed to call. It can be counted per variant (a probe that works badly in everyone) or per sample (an error in someones DNA that worked badly for every probe). Both variant and sample missingness need a threshold, and the (default) thresholds used in this pipeline are as follows: 
+|Step|Threshold|Removes if missing in more than|Keeps call rate of at least|
+|------|----|----|---|
+|Variant filter (lenient)|0.2|20% of samples|80%|
+|Sample filter|0.02|2% of variants|98%|
+|Variant filter (strict)|0.02|2% of samples|98%|  
+
+At this stage, we will first perform the lenient variant filtering and the sample filtering. The strict variant filter will be applied later in the pipeline. 
+PLINK applies --mind before --geno when both are given in one command, and we want to do the lenient variant filtering before sample filtering (see paper for detailed explanation on this). 
+
+```
+plink2 --bfile "$OUT/first_step" --geno 0.2 --threads "$THREADS" --out "$OUT/lenient_var"
+In our data, this excludes 1248 variants
+
+plink2 --bfile "$OUT/lenient_var" --mind 0.02 --threads "$THREADS" --out "$OUT/sample_missingn"
+In our data, this excludes 8 samples (individuals)
+
+We are now left with 978 samples and 863477 variants. 
+
+``` 
 
 
-
-###MISSINGNESS STATISTICS###
-#Missingness is the fraction of genotypes that the array failed to call. It can
-#be counted per variant (a probe that works badly in everyone) or per sample (a
-#DNA that worked badly at every probe), and both need a threshold.
-#
-#Rather than take a threshold on faith, we compute the two distributions first
-#and look at them. --missing writes one file for each: .vmiss per variant and
-#.smiss per sample.
-
-plink2 --bfile 00_raw --missing --threads $THREADS --out 01_missing_raw
-
-#Plot both distributions as histograms. The counts are on a log scale, because
-#nearly every variant and sample sits in the first bin and a linear axis would
-#hide the tail that the threshold has to be chosen against.
-Rscript figures.R missingness
-
-
-###LENIENT VARIANT FILTER###
-#We now do a lenient variant pass, dropping variants missing in more than 20%
-#of samples (i.e. keeping those with a call rate above 80%).
-#
-#Variants are filtered before samples so that a handful of bad probes does not
-#make a good sample look bad. The strict variant pass comes later (3.5), once
-#the bad samples are out of the way.
-
-plink2 --bfile 00_raw --geno 0.2 --threads $THREADS --make-bed --out 02_lenient_filter
-
-#For us this removed 1,248 variants, leaving 863,477.
-
-
-###SAMPLE MISSINGNESS FILTER###
-#Now the samples. We drop those missing more than 2% of their genotypes, i.e.
-#keeping those with a call rate above 98%. A sample below that has usually
-#failed in the lab rather than in one particular place in the genome.
-
-plink2 --bfile 02_lenient_filter --mind 0.02 --threads $THREADS --make-bed --out 03_sample_missingness
-
-#For us this removed 8 samples, leaving 978.
+### 1.2 Sex concordance 
 
 
 ###SEX CONCORDANCE###
