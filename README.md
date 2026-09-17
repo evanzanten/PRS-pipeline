@@ -5,13 +5,18 @@
 
 **This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by QC and PRS computation. Note that for generating the figures, we have a separate R script in this repository called figures.R.**
 **Contents**
+**Quality Control***
 **1.1 Variant and sample missingness**  
 **1.2 Sex concordance**   
 **1.3 Preliminary PCA and heterozygosity**  
 **1.4 Relatedness**  
 **1.5 Strict variant filtering**   
 **1.6 Hardy-Weinberg**  
-**1.7 MAF**  
+**1.7 MAF**
+**1.8 Variant Harmonization**
+**1.9 Principal Component Analysis**
+
+**Imputation**
   
 
 ### Preparation 
@@ -178,7 +183,6 @@ Since in our data, we removed 50 samples, we end up with 928 individuals.
 ### 1.3 Preliminary PCA and heterozygosity 
 Heterozygosity is the fraction of a person's genotypes that carry two different alleles. Too high suggests the sample is a mixture of two DNAs, and too low suggests inbreeding or a degraded sample. Either way it is a sign of a sample we should not trust. However, the 'normal' amount of heterozygosity differs enormously between ancestry groups, so in an admixed cohort like ours, comparing everybody to the mean heterozygosity rates of the entire cohort would flag whole ancestry groups instead of just bad samples. This is why, for cross-ancestry or admixed cohorts, it is advisable to perform a PCA to split the cohort into broad ancestry clusters, then within each cluster we remove individuals more than 3 standard deviations away from that cluster's mean heterozygosity. For relatively homogeneous cohorts such as European cohorts, you can skip the PCA step and directly compute the heterozygosity rates for the entire cohort. 
 
-**Principal Component Analysis**  
 We perform a PCA to do a rough separation of our cohort into clusters (see the paper to get a full description of how this step works). PCA needs variants that are roughly independent of one another, so we first prune for linkage disequilibrium. We also drop the long-range LD regions of Price et al. (2008), a short list of places in the genome where correlations stretch so far that they dominate the top components and swamp the ancestry signal we are after. Those coordinates are on build GRCh37, so check the build of your own data before using them. See the file high_ld_b37.txt to get a list of these regions. 
 
 ```
@@ -188,7 +192,7 @@ In the following command, we use plink to:
 
 plink2 --bfile "$OUT/sex_check_finished" --autosome --maf 0.05 \
        --exclude bed1 high_ld_b37.txt \
-       --indep-pairwise 200 50 0.2 --threads $THREADS --out pruned_longrange_ld
+       --indep-pairwise 200 50 0.2 --threads $THREADS --out "$OUT/pruned_longrange_ld"
 
 This left us with 109,774 variants out of 863,477, written to pruned_longrange_ld.prune.in.
 ```
@@ -197,16 +201,16 @@ We use only the first two principal components, since we want a coarse split int
 
 
 ```
-plink2 --bfile "$OUT/sex_check_finished" --extract pruned_longrange_ld.prune.in \
-       --pca 2 approx --seed $SEED --threads $THREADS --out rough_pca
+plink2 --bfile "$OUT/sex_check_finished" --extract "$OUT/pruned_longrange_ld.prune.in" \
+       --pca 2 approx --seed $SEED --threads $THREADS --out "$OUT/rough_pca"
 
-plink2 --bfile "$OUT/sex_check_finished" --extract pruned_longrange_ld.prune.in --het --threads $THREADS --out full_cohort_het
+plink2 --bfile "$OUT/sex_check_finished" --extract "$OUT/pruned_longrange_ld.prune.in" --het --threads $THREADS --out "$OUT/full_cohort_het"
 
 #figures.R does the clustering, draws the PCA and the heterozygosity plots, and writes the list of outliers to het_outliers.txt.
 
 #For us it found clusters of 626, 243 and 59 individuals, and flagged 14 outliers.
 
-plink2 --bfile "$OUT/sex_check_finished" --remove het_outliers.txt --threads $THREADS --make-bed --out het_finished
+plink2 --bfile "$OUT/sex_check_finished" --remove "$OUT/het_outliers.txt" --threads $THREADS --make-bed --out "$OUT/het_finished"
 
 #Leaving 914 samples.
 ```
@@ -214,135 +218,87 @@ plink2 --bfile "$OUT/sex_check_finished" --remove het_outliers.txt --threads $TH
     <tr>
       <td><img src="figures/pca_clusters.png" alt="PCA clusters"
   width="100%"></td>
-      <td><img src="figures/heterozygosity.png" alt="Heterozygosity rate per cluster. Solid line: cluster mean; dashed lines: ±3SD"
+      <td><img src="figures/heterozygosity.png" alt="Heterozygosity rate per cluster, dashed lines: ±3SD"
   width="100%"></td>
     </tr>
     <tr>
       <td align="center"><em>PC1 and PC2, coloured by cluster</em></td>
-      <td align="center"><em>Heterozygosity rate per cluster</em></td>
+      <td align="center"><em>Heterozygosity rate per cluster (dashed lines: ±3SD</em></td>
     </tr>
   </table>
 
+### 1.4 Kinship estimation 
+Related individuals break the assumption that every sample in your analysis is an independent observation, which both the PRS evaluation and any association testing rely on. This step also checks whether there are any duplicate samples in our data, which can also bias any future analysis we want to do. We estimate kinship with the KING algorithm, which is robust to the population structure that we just observed in our PCA. KING runs on the same pruned variant list. For each pair of individuals, we get a kinship coefficient, which is the probability that an allele drawn from both persons is inherited from the same ancestor. As mentioned in the paper, we use the following thresholds: 
+
+|Threshold|Relationship|
+|---|---|
+|<0.04|Unrelated|
+|0.04-0.09|Third-degree relatives (first cousins)|
+|0.09-0.18|Second-degree (half-siblings, grandparent-grandchild)|
+|0.18-0.35|First-degree (parent-child, full siblings, dizygotic twins)|
+|>0.35|Duplicate samples or monozygotic twins|
+
+```
+plink2 --bfile "$OUT/het_finished" --extract "$OUT/pruned_longrange_ld.prune.in" --make-king-table --threads $THREADS --out "$OUT/kinship"
+```
+Let's look at the count within each band. We now have 914 samples and a total of 417241 sample pairs to be tested. 
+
+|Threshold|Count|
+|---|---|
+|<0.04|       417149|
+|0.04-0.09|37|
+|0.09-0.18|14|
+|0.18-0.35|33|
+|>0.35|8|
+
+The 8 pairs above 0.35 are four people who were genotyped twice, which is worth knowing about before you find them here. It is also worthwhile to mention that it is important to perform the heterozygosity step before estimating kinship, since if we would run this kinship step without checking heterozygosity first, we would include possible contaminated samples, which looks slightly related to everybody. In our case, this would have resulted in 1531 pairs in the 0.04-0.09 band! 
+
+Let's remove one of each pair with a kinship coefficient > 0.09, corroborating with second degree or closer relatives. The --king-cutoff works out which sample to drop so that the fewest samples are lost. 
+
+```
+plink2 --bfile "$OUT/het_finished" --extract "$OUT/pruned_longrange_ld.prune.in" \
+       --king-cutoff 0.09 --threads $THREADS --out "$OUT/remove_related_individuals"
+
+plink2 --bfile "$OUT/het_finished" --remove "$OUT/remove_related_individuals.out.id" \
+       --threads $THREADS --make-bed --out "$OUT/unrelated_individuals"
+```
+For us this removed 44 samples, leaving 870. Note that the file PLINK writes has a header line, so it has 45 lines for 44 samples - --remove knows this, but do not be caught out if you count them yourself.
 
 
-###KINSHIP ESTIMATION###
-#Related individuals break the assumption that every sample is an independent
-#observation, which both the association testing and the PRS evaluation rely on.
-#Duplicates are worse still: the same person counted twice.
-#
-#We estimate kinship with the KING algorithm, which is robust to the population
-#structure we just saw in the PCA. It runs on the same pruned variants.
-#
-#A kinship coefficient is roughly the probability that an allele drawn from one
-#person and one from the other are inherited from the same ancestor. The
-#conventional bands are:
-#
-#  < 0.04       unrelated
-#  0.04 - 0.09  third-degree relatives (first cousins)
-#  0.09 - 0.18  second-degree (half-siblings, grandparent-grandchild)
-#  0.18 - 0.35  first-degree (parent-child, full siblings)
-#  > 0.35       the same person twice
+### 1.5 Strict variant filter 
+Now that we cleaned up all our samples, we repeat the variant filtering at the threshold we actually wanted: a 98% call rate. Doing this only now rather than at the beginning means that a variant is not dropped on the basis of samples that have been removed.
 
-plink2 --bfile 07_het_ok --extract 06_prune.prune.in --make-king-table --threads $THREADS --out 08_king
+```
+plink2 --bfile "$OUT/unrelated_individuals" --geno 0.02 --threads $THREADS --make-bed --out "$OUT/strict_variant_filter"
+```
+For us this removed 9,026 variants, leaving 854,451.
 
-#Plot the counts in each band. Note this reports every possible pair, so the
-#unrelated bin is enormous and the plot uses a log scale.
-Rscript figures.R kinship
+### 1.6 Hardy-Weinberg equilibrium
+Hardy-Weinberg equilibrium is the genotype frequency you expect from the allele
+#frequency if mating is random. A variant that departs from it sharply is usually a genotyping error, so we apply it as a filter in this pipeline. Our cohort is case/control, and it is better to just test HWE in controls since a real risk variant carried by a case is expected to depart from HWE. We therefore collect the variants that depart from HWE in controls, and then remove those variants from the cases as well. 
 
-#For us, out of the 417,241 pairs among 914 samples:
-#  <0.04       417149
-#  0.04-0.09       37
-#  0.09-0.18       14
-#  0.18-0.35       33
-#  >0.35            8
-#
-#The 8 pairs above 0.35 are the four people who were genotyped twice, which is
-#worth knowing about before you find them here.
-#
-#This is also where the previous step earns its place. Run on the data before
-#the heterozygosity filter, the 0.04-0.09 band held 1,531 pairs instead of 37:
-#a contaminated sample looks slightly related to everybody, so 14 bad samples
-#produced around 1,500 spurious relationships between themselves and the rest.
+First, we use our .fam file generated by the last step to make a list of control individuals. 
 
-#Remove one of each pair closer than second-degree. --king-cutoff works out for
-#itself which member of each pair to drop so that the fewest samples are lost.
-plink2 --bfile 07_het_ok --extract 06_prune.prune.in \
-       --king-cutoff 0.09 --threads $THREADS --out 08_king_cutoff
+```
+Here, we use awk again to filter just for controls, which are noted as "1" in the 6th column (hence $6==1). We then print the FID and IID of those individuals (hence {print $1"\t"$2}), which is needed for PLINK to extract them. 
+awk '$6==1 {print $1"\t"$2}' "$OUT/strict_variant_filter.fam" > "$OUT/control_samples.txt"
+```
+Now we can extract those control individuals and apply the HWE filter on these people. We want to keep the variants that do not deviate from HWE, therefore we use --write-snplist. 
+```
+plink2 --bfile "$OUT/strict_variant_filter" --keep "$OUT/control_samples.txt" \
+       --hwe 1e-6 --write-snplist --threads $THREADS --out "$OUT/hwe_passed"
 
-plink2 --bfile 07_het_ok --remove 08_king_cutoff.king.cutoff.out.id \
-       --threads $THREADS --make-bed --out 09_unrelated
+plink2 --bfile "$OUT/strict_variant_filter" --extract "$OUT/hwe_passed" --threads $THREADS --make-bed --out "$OUT/hwe_completed"
+```
+For us this removed 409 variants, leaving 854,042.
 
-#For us this removed 44 samples, leaving 870. Note that the file PLINK writes
-#has a header line, so it has 45 lines for 44 samples - --remove knows this, but
-#do not be caught out if you count them yourself.
+### 1.7 Minor allele frequency
+As a last QC step, we filter out variants with a MAF below 1%, since at our sample size, a rare variant is carried by too few people to reliably estimate an effect for, and genotype errors also tend to concentrate at rare variants since there are harder to call. This is also where the 144,311 no-ALT variants we saw at the beginning leave the dataset, since a variant with only one allele has a frequency of zero and is uninformative. 
+
+```
+plink2 --bfile "$OUT/hwe_passed" --maf 0.01 --threads $THREADS --make-bed --out "$OUT/MAF"
+```
+For us this removed 403,302 variants, leaving 450,740.
 
 
-###STRICT VARIANT FILTER###
-#Now that the bad samples are gone, we repeat the variant pass at the threshold
-#we actually want: a 98% call rate. Doing it now rather than at the start means
-#a variant is not condemned on the basis of samples that have since been removed.
-
-plink2 --bfile 09_unrelated --geno 0.02 --threads $THREADS --make-bed --out 10_strict_filter
-
-#For us this removed 9,026 variants, leaving 854,451.
-
-
-###HARDY WEINBERG###
-#Hardy-Weinberg equilibrium is the genotype frequency you expect from the allele
-#frequency if mating is random. A variant that departs from it sharply is
-#usually a genotyping error, so it is a standard filter.
-#
-#This is a case/control cohort, so we test in the controls only. A real risk
-#variant is expected to depart from equilibrium in cases, which is the whole
-#point of it, and testing there would throw out exactly the variants we are
-#looking for. We collect the variants that pass in controls, then apply that
-#list to everyone.
-
-awk '$6==1 {print $1"\t"$2}' 10_strict_filter.fam > 11_controls.txt
-
-plink2 --bfile 10_strict_filter --keep 11_controls.txt \
-       --hwe 1e-6 --write-snplist --threads $THREADS --out 11_hwe_pass
-
-plink2 --bfile 10_strict_filter --extract 11_hwe_pass.snplist --threads $THREADS --make-bed --out 11_hwe
-
-#For us this removed 409 variants, leaving 854,042.
-
-
-###MAF###
-#Finally we drop variants with a minor allele frequency below 1%. At this sample
-#size a rarer variant is carried by too few people to estimate an effect for, and
-#it is also where genotyping errors concentrate.
-#
-#This is also where the 144,311 no-ALT variants we saw at the very beginning
-#leave the dataset, since a variant with only one allele has a frequency of zero.
-
-plink2 --bfile 11_hwe --maf 0.01 --threads $THREADS --make-bed --out 12_maf
-
-#For us this removed 403,302 variants, leaving 450,740.
-
-
-###SUMMARY###
-#Samples and variants left after each step.
-
-printf '\n%-28s %10s %10s\n' step samples variants
-for step in 00_all 00_raw 02_lenient_filter 03_sample_missingness 05_sex_ok \
-            07_het_ok 09_unrelated 10_strict_filter 11_hwe 12_maf; do
-    printf '%-28s %10s %10s\n' "$step" "$(wc -l < $step.fam)" "$(wc -l < $step.bim)"
-done
-
-#For us:
-#  step                            samples   variants
-#  00_all                             1019     864725
-#  00_raw                              986     864725
-#  02_lenient_filter                   986     863477
-#  03_sample_missingness               978     863477
-#  05_sex_ok                           928     863477
-#  07_het_ok                           914     863477
-#  09_unrelated                        870     863477
-#  10_strict_filter                    870     854451
-#  11_hwe                              870     854042
-#  12_maf                              870     450740
-
-echo
-echo "QC'd data: 12_maf"
-echo "Figures:   $FIG"
+**We are now finished with the QC part of this pipeline. We are left with 870 samples (479 cases, 391 controls) and 450,740 variants. 
