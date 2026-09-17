@@ -3,7 +3,8 @@
 **Author: van Zanten, E.S.**
 
 
-**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by these QC steps:**    
+**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by QC and PRS computation. Note that for generating the figures, we have a separate R script in this repository called figures.R.**
+**Contents**
 **1.1 Variant and sample missingness**  
 **1.2 Sex concordance**   
 **1.3 Preliminary PCA and heterozygosity**  
@@ -192,7 +193,7 @@ plink2 --bfile "$OUT/sex_check_finished" --autosome --maf 0.05 \
 This left us with 109,774 variants out of 863,477, written to pruned_longrange_ld.prune.in.
 ```
 
- We use only the first two principal components, since we want a coarse split into groups, not an ancestry assignment (we leave that for section 3.9). We use PLINK's randomised PCA algorithm (approx). PLINK recommends it only above 5,000 samples and we have fewer, but it is much faster than the exact algorithm, and the difference between the two is far smaller than the spread of the clusters, so it doesn't matter here. Because this algorithm is randomised, we use the seed set in the configuration step. We then calculate heterozygosity for every sample in one go. Each sample's heterozygosity depends only on its own genotypes, so it does not matter that we calculate it for the whole cohort at once. The clusters are used in the next step, where we compare each sample with the average of its own cluster rather than with the whole cohort.
+We use only the first two principal components, since we want a coarse split into groups, not an ancestry assignment (we leave that for section 3.9). We use PLINK's randomised PCA algorithm (approx). PLINK recommends it only above 5,000 samples and we have fewer, but it is much faster than the exact algorithm, and the difference between the two is far smaller than the spread of the clusters, so it doesn't matter here. Because this algorithm is randomised, we use the seed set in the configuration step. We then calculate heterozygosity for every sample in one go. Each sample's heterozygosity depends only on its own genotypes, so it does not matter that we calculate it for the whole cohort at once. The clusters are used in the next step, where we compare each sample with the average of its own cluster rather than with the whole cohort.
 
 
 ```
@@ -213,7 +214,7 @@ plink2 --bfile "$OUT/sex_check_finished" --remove het_outliers.txt --threads $TH
     <tr>
       <td><img src="figures/pca_clusters.png" alt="PCA clusters"
   width="100%"></td>
-      <td><img src="figures/heterozygosity.png" alt="Heterozygosity per cluster"
+      <td><img src="figures/heterozygosity.png" alt="Heterozygosity rate per cluster. Solid line: cluster mean; dashed lines: ±3SD"
   width="100%"></td>
     </tr>
     <tr>
