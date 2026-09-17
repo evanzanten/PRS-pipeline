@@ -3,10 +3,10 @@
 **Author: van Zanten, E.S.**
 
 
-**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by QC and PRS computation. Note that for generating the figures, we have a separate R script in this repository called figures.R.**
-**Contents**
-**Quality Control***
-**1.1 Variant and sample missingness**  
+**This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by QC and PRS computation. Note that for generating the figures, we have a separate R script in this repository called figures.R.**  
+**Contents**  
+**Quality Control**  
+**1.1 Variant and sample missingness**    
 **1.2 Sex concordance**   
 **1.3 Preliminary PCA and heterozygosity**  
 **1.4 Relatedness**  
