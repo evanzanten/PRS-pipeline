@@ -268,58 +268,250 @@ For us this removed 44 samples, leaving 870. Note that the file PLINK writes has
 
 
 ### 1.5 Strict variant filter and differential missingness
-Now that we cleaned up all our samples, we repeat the variant filtering at the threshold we actually wanted: a 98% call rate. Doing this only now rather than at the beginning means that a variant is not dropped on the basis of samples that have been removed.
+  Now that we cleaned up all our samples, we repeat the variant filtering at the threshold we
+  actually wanted: a 98% call rate. Doing this only now rather than at the beginning means
+  that a variant is not dropped on the basis of samples that have been removed.
 
-```
-plink2 --bfile "$OUT/unrelated_individuals" --geno 0.02 --threads $THREADS --make-bed --out "$OUT/strict_variant_filter"
-```
-For us this removed 9,026 variants, leaving 854,451.
+  ```bash
+  plink2 --bfile "$OUT/unrelated_individuals" --geno 0.02 --threads $THREADS --make-bed --out
+  "$OUT/strict_variant_filter"
+  ```
+  For us this removed 9,026 variants, leaving 854,451.
 
-At this stage, we also test differential missingness between the cases and controls. Since our cases and controls were genotyped on separate plates, variants could fail more often on one set of plates, resulting in more missingness in cases than controls or vice versa. This difference can show up as a false association later on, which is why for every variant we test whether its missingness differs between cases and controls. We do this after the strict variant filter so that we test on the final set of samples. Note this can only be done in PLINK 1.9. 
+  At this stage, we also test differential missingness between the cases and controls. Since
+  our cases and controls were genotyped on separate plates, variants could fail more often on
+  one set of plates, resulting in more missingness in cases than controls or vice versa. This
+  difference can show up as a false association later on, which is why for every variant we
+  test whether its missingness differs between cases and controls. We do this after the strict
+  variant filter so that we test on the final set of samples. Note this can only be done in
+  PLINK 1.9.
 
-PLINK wants to know what samples are cases, so we extract those from the phenotype file. 
-We use a command called "grep", which can rapidly search and filter for specific strings in our phenotyping file. Adding "-w" makes sure that we extract whole words that exactly match what we are looking for (e.g. if we would also have "NonCase" in our file and not use -w, then we would also extract that". We use "cut -f2,3" to cut to just the second and third fields (columns). 
+  PLINK wants to know what samples are cases, so we extract those from the phenotype file.
+  We use a command called "grep", which can rapidly search and filter for specific strings in
+  our phenotyping file. Adding "-w" makes sure that we extract whole words that exactly match
+  what we are looking for (e.g. if we would also have "NonCase" in our file and not use -w,
+  then we would also extract that). We use "cut -f2,3" to cut to just the second and third
+  fields (columns).
 
-```
-grep -w Case "$PHENO" | cut -f2,3 > "$OUT/cases.txt"
-plink --bfile "$OUT/strict_variant_filter" --make-pheno "$OUT/cases.txt" '*' --test-missing --threads $THREADS --out "$OUT/diff_missingness"
-```
-We only filter for variants that are significantly different in their missingness between cases and controls, so we use awk to filter for variant IDs (column 2) with a p-value (column 5) below 1e-5. 
-```
-awk 'NR>1 && $5<1e-5 {print $2}' "$OUT/diff_missingness.missing" > "$OUT/diff_missingness_remove.txt"
-```
-Now we can use PLINK2 again to exclude these variants. For us, this only excluded 3 variants. 
-plink2 --bfile "$OUT/strict_filter" --exclude "$OUT/diff_missingness_remove.txt" --threads $THREADS --make-bed --out "$OUT/diff_missingness_finished"
+  ```bash
+  grep -w Case "$PHENO" | cut -f2,3 > "$OUT/cases.txt"
+  plink --bfile "$OUT/strict_variant_filter" --make-pheno "$OUT/cases.txt" '*' --test-missing
+  --threads $THREADS --out "$OUT/diff_missingness"
+  ```
+  We only filter for variants that are significantly different in their missingness between
+  cases and controls, so we use awk to filter for variant IDs (column 2) with a p-value
+  (column 5) below 1e-5.
+  ```bash
+  awk 'NR>1 && $5<1e-5 {print $2}' "$OUT/diff_missingness.missing" >
+  "$OUT/diff_missingness_remove.txt"
+  ```
+  Now we can use PLINK2 again to exclude these variants. For us, this only excluded 3
+  variants.
+  ```bash
+  plink2 --bfile "$OUT/strict_variant_filter" --exclude "$OUT/diff_missingness_remove.txt"
+  --threads $THREADS --make-bed --out "$OUT/diff_missingness_finished"
+  ```
+
+  ### 1.6 Hardy-Weinberg equilibrium
+  Hardy-Weinberg equilibrium is the genotype frequency you expect from the allele frequency if
+  mating is random. A variant that departs from it sharply is usually a genotyping error, so
+  we apply it as a filter in this pipeline. Our cohort is case/control, and it is better to
+  just test HWE in controls since a real risk variant carried by a case is expected to depart
+  from HWE. We therefore collect the variants that depart from HWE in controls, and then
+  remove those variants from the cases as well.
+
+  First, we use our .fam file generated by the last step to make a list of control
+  individuals. Here, we use awk again to filter just for controls, which are noted as "1" in
+  the 6th column (hence $6==1). We then print the FID and IID of those individuals (hence
+  {print $1"\t"$2}), which is needed for PLINK to extract them.
+
+  ```bash
+  awk '$6==1 {print $1"\t"$2}' "$OUT/diff_missingness_finished.fam" >
+  "$OUT/control_samples.txt"
+  ```
+  Now we can extract those control individuals and apply the HWE filter on these people. We
+  want to keep the variants that do not deviate from HWE, therefore we use --write-snplist.
+  ```bash
+  plink2 --bfile "$OUT/diff_missingness_finished" --keep "$OUT/control_samples.txt" \
+         --hwe 1e-6 --write-snplist --threads $THREADS --out "$OUT/hwe_passed"
+
+  plink2 --bfile "$OUT/diff_missingness_finished" --extract "$OUT/hwe_passed.snplist"
+  --threads $THREADS --make-bed --out "$OUT/hwe_completed"
+  ```
+  For us this removed 409 variants, leaving 854,042.
+
+  ### 1.7 Minor allele frequency
+  We now filter out variants with a MAF below 1%, since at our sample size, a rare variant is
+  carried by too few people to reliably estimate an effect for, and genotype errors also tend
+  to concentrate at rare variants since they are harder to call. This is also where the
+  144,311 no-ALT variants we saw at the beginning leave the dataset, since a variant with only
+  one allele has a frequency of zero and is uninformative.
+
+  ```bash
+  plink2 --bfile "$OUT/hwe_completed" --maf 0.01 --threads $THREADS --make-bed --out
+  "$OUT/MAF"
+  ```
+  For us this removed 403,302 variants, leaving 450,740.
+
+  We are now left with 870 samples (479 cases, 391 controls) and 450,740 variants.
+
+  ### 1.8 Variant harmonization
+  Different datasets can describe the same variant in different ways (e.g. on a different
+  genome build, on the other DNA strand, or with the REF and ALT alleles swapped). It is
+  important to have our dataset in line with the reference panel and with the GWAS we will use
+  later for PRS computation, otherwise any effect sizes will be applied to the wrong allele.
+  In this step, we will compare every variant in our dataset with the 1000 genomes reference
+  panel and fix or remove those that do not agree with 1000 genomes.
+
+  For this step, we set up a configuration again by assigning variables to the files we want
+  to use:
+  * HRC-1000G-check-bim.pl is a perl script that compares our variants with 1000 genomes by
+  reading our .bim and .frq files and then checking whether the alleles match, which strand it
+  is on, and which allele is the reference. It does not change our data itself, but outputs
+  lists of variants to exclude/flip/update.
+  * 1000GP_Phase3_combined.legend.gz is a legend file of 1000 genomes that is used in the perl
+  script.
+  * human_g1k_v37.fasta.gz is used in the last step to determine whether the cleaned up data
+  actually matches the reference genome.
+
+  ```bash
+  CHECK_BIM=HRC-1000G-check-bim.pl
+  LEGEND=1000GP_Phase3_combined.legend.gz
+  FASTA=human_g1k_v37.fasta.gz
+  ```
+
+  #### Step 1: Check the genome build
+
+  All files we use are on build GRCh37, and we need to make absolutely sure that our data is
+  on that build as well. The easiest way to do this is by looking at chromosome 1, which is
+  249,250,621 bases long on GRCh37, but only 248,956,422 on GRCh38. So we look up the highest
+  position of any variant on chromosome 1 in our data: if it lies beyond 248,956,422, it
+  cannot exist on GRCh38, so our data must be on GRCh37.
+
+  ```bash
+  awk '$1==1 && $4>max {max=$4} END {print max}' "$OUT/MAF.bim"
+  ```
+  This looks at lines where the chromosome is 1 ($1==1) and where the position is larger than
+  the largest seen so far ($4>max). If the current position is the largest seen so far,
+  remember that position ({max=$4}) and after the last line, print the largest position found
+  (END {print max}).
+  For us, this prints 249,212,878, so our data is on GRCh37. If your data is on GRCh38, you
+  can use LiftOver first (see [put link to liftover]), or change the above files to match
+  GRCh38.
+
+  #### Step 2: Calculate the allele frequency of every variant in your data
+
+  The checking tool compares the allele frequencies with those in the 1000 genomes file, and
+  it expects the .frq format, which is only produced by PLINK 1.9. It is important to use the
+  --keep-allele-order command in here, since PLINK 1.9 by default reports only the frequency
+  of the rarer allele for every variant, which does not always correspond to the allele
+  reported in the A1 column of the .bim file. Since the tool assumes this does correspond,
+  without this command it compares the wrong frequencies for these variants (in our case this
+  goes for 1,811 variants).
+
+  ```bash
+  plink --bfile "$OUT/MAF" --freq --keep-allele-order --threads "$THREADS" --out
+  "$OUT/check_freq"
+  ```
+
+  #### Step 3: Run the perl script to compare your variants to 1000 genomes
+
+  The tool reads our .bim and .frq files and the 1000 genomes legend file. Since the tool
+  needs to read the entire 1000 genomes legend file (~81 million lines), it is recommended to
+  run this step as a batch job rather than on a login node, since this can take very long or
+  get killed.
+  ```bash
+  perl "$CHECK_BIM" -b "$OUT/MAF.bim" -f "$OUT/check_freq.frq" -r "$LEGEND" -g -p AMR
+  ```
+  Here, we call the perl script to run the analysis on the .bim file we created at the MAF
+  step, and specify the .frq file we created in the last step. We point to the reference file
+  (-r, the 1000 genomes legend file), and tell the script that we are using 1000 genomes (not
+  HRC) as a reference panel by adding -g. We pick the population closest to our cohort, which
+  is the admixed American population of 1000 genomes (AMR: people from Mexico, Puerto Rico,
+  Colombia and Peru), by adding -p AMR.
+
+  The summary of the result is printed in a .txt file. In our case:
+  * A total of 25,335 variants are listed for removal:
+      - 18,327 variants are not in 1000 Genomes. 17,057 of these are on chromosomes X, XY, Y
+  and MT, which the legend file does not cover, so from here on our data only contains
+  chromosomes 1-22. The other 1,270 are on chromosomes 1-22 but are not in 1000 Genomes.
+      - 2,799 variants have alleles that do not match 1000 genomes (e.g. A/G in our data, and
+  A/C in 1000 Genomes).
+      - 2,032 variants have allele frequencies more than 0.2 away from the reference. In our
+  case, this can be due to ancestry, but we remove them just to be sure.
+      - 1,830 are palindromic SNPs (A/T or C/G) with a MAF above 0.4, in which case we cannot
+  tell whether this is a strand flip or real alleles.
+      - 347 variants are duplicates of another variant at the same position.
+  * None of our variants needed a strand flip or a new position.
+
+  #### Step 4: Apply the generated lists
+
+  We again use PLINK 1.9 for this, to flip strands (if needed).
+
+  Remove the variants listed by the tool:
+  ```bash
+  plink --bfile "$OUT/MAF" --exclude "$OUT/Exclude-MAF-1000G.txt" --threads "$THREADS"
+  --make-bed --out "$OUT/variants_in_reference"
+  ```
+  Now, correct chromosomes and positions that differ from the reference (we did not have to do
+  this for our data):
+  ```bash
+  plink --bfile "$OUT/variants_in_reference" --update-chr "$OUT/Chromosome-MAF-1000G.txt"
+  --threads $THREADS --make-bed --out "$OUT/chr_updated"
+
+  plink --bfile "$OUT/chr_updated" --update-map "$OUT/Position-MAF-1000G.txt" --threads
+  "$THREADS" --make-bed --out "$OUT/pos_updated"
+  ```
+  Also flip variants that were reported to be on the other strand (we did not have to do this
+  for our data):
+  ```bash
+  plink --bfile "$OUT/pos_updated" --flip "$OUT/Strand-Flip-MAF-1000G.txt" --threads $THREADS
+  --make-bed --out "$OUT/strand_flipped_correct"
+  ```
+  Now we set the reference allele to the one reported in 1000 genomes. In PLINK, --a2-allele
+  puts the reference allele in the A2 column, which is where PLINK keeps the reference allele,
+  and then --keep-allele-order is used to stop PLINK from swapping these alleles back when it
+  writes the files.
+  ```bash
+  plink --bfile "$OUT/strand_flipped_correct" --a2-allele "$OUT/Force-Allele1-MAF-1000G.txt"
+  --keep-allele-order --threads $THREADS --make-bed --out "$OUT/harmonization_finished"
+  ```
+  For us, this changed the reference allele for 76,872 variants, which PLINK had guessed the
+  wrong way around when it created the files (remember some of our variants had the PR,
+  "provisional reference allele" flag in the VCF).
+
+  #### Step 5: Check the result against the reference genome
+
+  As a double-check, we now check the result of this harmonization against the reference
+  genome. Using the --ref-from-fa command looks up the base at each position in the GRCh37
+  FASTA file and compares it with our reference allele. If we did the harmonization correctly,
+  nothing should need changing.
+
+  ```bash
+  plink2 --bfile "$OUT/harmonization_finished" --fa "$FASTA" --ref-from-fa --threads $THREADS
+  --make-just-bim --out "$OUT/harmonization_check"
+  ```
+
+  Output for us:
+  ```
+  --ref-from-fa: 0 variants changed, 425405 validated.
+  ```
+  Hooray!
 
 
-### 1.6 Hardy-Weinberg equilibrium
-Hardy-Weinberg equilibrium is the genotype frequency you expect from the allele
-#frequency if mating is random. A variant that departs from it sharply is usually a genotyping error, so we apply it as a filter in this pipeline. Our cohort is case/control, and it is better to just test HWE in controls since a real risk variant carried by a case is expected to depart from HWE. We therefore collect the variants that depart from HWE in controls, and then remove those variants from the cases as well. 
+Last but not least for this step, it is nice to show the before and after of the harmonization. Before harmonization, the orange variants lie on the anti-diagonal because their REF and ALT alleles are swapped, and after harmonization all variants lie on the diagonal. The y-axis of the first plot runs to 0.6 because our ALT allele is ALMOST always the rarer one, and a few variants end up just above 0.5. For the orange variants, the variant labelled as the ALT in our data is the REF in the 1000 genomes data, so after harmonization these are corrected and the frequencies move above 0.5. 
+  <table>
+    <tr>
+      <td colspan="2"><img src="figures/harmonization_frequencies.png" alt="Allele frequencies
+  against 1000 Genomes, before and after harmonization" width="700"></td>
+    </tr>
+    <tr>
+      <td align="center" width="50%"><em>Before harmonization</em></td>
+      <td align="center" width="50%"><em>After harmonization</em></td>
+    </tr>
+  </table>
 
-First, we use our .fam file generated by the last step to make a list of control individuals. 
 
-```
-Here, we use awk again to filter just for controls, which are noted as "1" in the 6th column (hence $6==1). We then print the FID and IID of those individuals (hence {print $1"\t"$2}), which is needed for PLINK to extract them. 
-awk '$6==1 {print $1"\t"$2}' "$OUT/diff_missingness_finished.fam" > "$OUT/control_samples.txt"
-```
-Now we can extract those control individuals and apply the HWE filter on these people. We want to keep the variants that do not deviate from HWE, therefore we use --write-snplist. 
-```
-plink2 --bfile "$OUT/strict_variant_filter" --keep "$OUT/control_samples.txt" \
-       --hwe 1e-6 --write-snplist --threads $THREADS --out "$OUT/hwe_passed"
 
-plink2 --bfile "$OUT/strict_variant_filter" --extract "$OUT/hwe_passed" --threads $THREADS --make-bed --out "$OUT/hwe_completed"
-```
-For us this removed 409 variants, leaving 854,042.
 
-### 1.7 Minor allele frequency
-As a last QC step, we filter out variants with a MAF below 1%, since at our sample size, a rare variant is carried by too few people to reliably estimate an effect for, and genotype errors also tend to concentrate at rare variants since there are harder to call. This is also where the 144,311 no-ALT variants we saw at the beginning leave the dataset, since a variant with only one allele has a frequency of zero and is uninformative. 
-
-```
-plink2 --bfile "$OUT/hwe_passed" --maf 0.01 --threads $THREADS --make-bed --out "$OUT/MAF"
-```
-For us this removed 403,302 variants, leaving 450,740.
-
-We are now left with 870 samples (479 cases, 391 controls) and 450,740 variants. 
-
-### 1.8 Variant harmonization 
 
