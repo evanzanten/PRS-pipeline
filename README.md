@@ -511,6 +511,54 @@ Last but not least for this step, it is nice to show the before and after of the
     </tr>
   </table>
 
+### 1.9 Principal Component Analysis
+In step 1.3, we did a rough PCA on our cohort itself, just to split it into clusters for assessing heterozygosity per cluster. We are now doing the same analysis again (also a PCA), but in a more fine-grained manner to infer which ancestry our individuals actually have. To do this, we merge our data with the 1000 Genomes reference panel, in which the ancestry of each individual is known. We then run the PCA on the combined data so that the individuals in our cohort will cluster near the individuals of the 1000 Genomes data, and in that way we can determine the ancestry of the individuals in our cohort. Since our cohort is Brazilian (admixed), many individuals in our cohort will likely not cluster with one specific ancestry, but fall in between the clusters. 
+
+This is another more lengthy and complex step, in which we need two more 1000 genomes files that we are going to add to our configuration: 
+```
+1000 Genomes Phase 3 reference VCF files, per chromosome:
+KG_DIR=/path_to_1000genomes/
+The panel file from the same 1000 genomes folder, which lists the populations and superpopulations of each 1000 genomes individual. We use this for making the figure in R, so we need to export it.
+export KG_PANEL=/path_to_1000genomes/integrated_call_samples_v3.20130502.ALL.panel
+```
+  #### Step 1: Prepare the data
+  We use the same pruned variant set as in step 1.3, since PCA needs variants that are roughly independent. We take them from the harmonized data to make sure that the reference alleles match 1000 Genomes. As mentioned above, our variant IDs are Axiom probe names, which 1000 Genomes do not recognize. Instead, we give each variant a new ID composed of chromosome, position, reference allele and alternative allele (e.g. 1:86028:T:C). In --set-all-var-ids, @ stands for the chromosome, # for the position, $r for the reference allele and $a for the alternative allele. The single quotes make sure bash does not read $r and $a as variables.
+
+  Note that this has to be done in two commands: PLINK renames the variants before it looks at --extract, so in one command the Axiom names in our pruned list would no longer match anything.
+
+  ```bash
+  plink2 --bfile "$OUT/harmonization_finished" --extract "$OUT/pruned_longrange_ld.prune.in" --threads $THREADS --make-bed --out "$OUT/pca_pruned"
+
+  plink2 --bfile "$OUT/pca_pruned" --set-all-var-ids '@:#:$r:$a' --threads $THREADS --make-bed --out "$OUT/pca_cohort"
+  ```
+  For us this left 104,471 variants.
+ #### Step 2: Take the same variants from 1000 Genomes
+
+  The 1000 Genomes files contain over 80 million variants, and we only need the ones we just
+  kept. We first write their positions to a file: chromosome, start, end and a name (column 1,
+  4, 4 and 2 of our .bim file).
+
+  ```bash
+  awk '{print $1"\t"$4"\t"$4"\t"$2}' "$OUT/pca_cohort.bim" > "$OUT/pca_positions.txt"
+  ```
+
+  Then we extract those positions from each chromosome file of 1000 Genomes. Since there are 22 files, we use a "for loop": the command between "do" and "done" is run once for every chromosome, and each time ${chr} is replaced by the chromosome number. We keep only SNPs with two alleles (--snps-only just-acgt --max-alleles 2), give the variants the same kind of ID as our own data, and remove duplicate IDs (--rm-dup force-first). This step reads the complete 1000 Genomes files, so run it as a batch job (for us, all steps of this section together took 15 minutes on a compute node).
+
+  ```bash
+  for chr in {1..22}; do
+  plink2 --vcf "$KG_DIR/ALL.chr${chr}.phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz" --double-id --extract range "$OUT/pca_positions.txt" --snps-only just-acgt --max-alleles 2 --set-all-var-ids   '@:#:$r:$a' --rm-dup force-first --threads $THREADS --make-bed --out "$OUT/kg_chr${chr}"
+  done
+  ```
+
+  We now combine the 22 chromosomes into one file with PLINK 1.9. --merge-list takes a text file listing all files to combine, and --keep-allele-order stops PLINK from swapping the reference and alternative alleles."
+
+  ```bash
+for chr in {1..22}; do echo "$OUT/kg_chr${chr}"; done > "$OUT/kg_merge_list.txt"
+  plink --merge-list "$OUT/kg_merge_list.txt" --keep-allele-order --threads $THREADS
+  --make-bed --out "$OUT/kg_reference"
+
+  ```
+
 
 
 
