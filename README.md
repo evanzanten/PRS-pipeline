@@ -5,9 +5,9 @@
 
 **This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by QC and PRS computation. Note that for generating the figures, we have a separate R script in this repository called figures.R.**  
 
-**Contents** 
+## Contents
 
-**Quality Control**  
+## Quality Control
 **1.1 Variant and sample missingness**    
 **1.2 Sex concordance**   
 **1.3 Preliminary PCA and heterozygosity**  
@@ -18,7 +18,10 @@
 **1.8 Variant Harmonization**  
 **1.9 Principal Component Analysis**  
 
-**Imputation**  
+## Imputation 
+
+## PRS calculation
+  
   
 
 ### Preparation 
@@ -129,6 +132,8 @@ For us:
 1 binary phenotype loaded (513 cases, 473 controls).
 --update-sex: 986 samples updated.
 ```
+
+## Quality Control
 
 ### 1.1 Missingness
 Missingness is the fraction of genotypes that the array failed to call. It can be counted per variant (a probe that works badly in everyone) or per sample (an error in someones DNA that worked badly for every probe). Both variant and sample missingness need a threshold, and the (default) thresholds used in this pipeline are as follows: 
@@ -533,7 +538,6 @@ export KG_PANEL=/path_to_1000genomes/integrated_call_samples_v3.20130502.ALL.pan
   ```
   For us this left 104,471 variants.
  #### Step 2: Take the same variants from 1000 Genomes
-
   The 1000 Genomes files contain over 80 million variants, and we only need the ones we just
   kept. We first write their positions to a file: chromosome, start, end and a name (column 1,
   4, 4 and 2 of our .bim file).
@@ -550,14 +554,151 @@ export KG_PANEL=/path_to_1000genomes/integrated_call_samples_v3.20130502.ALL.pan
   done
   ```
 
-  We now combine the 22 chromosomes into one file with PLINK 1.9. --merge-list takes a text file listing all files to combine, and --keep-allele-order stops PLINK from swapping the reference and alternative alleles."
+  We now combine the 22 chromosomes into one file with PLINK 1.9. --merge-list takes a text file listing all files to combine, and again we use --keep-allele-order to stop PLINK from swapping the reference and alternative alleles. 
 
   ```bash
 for chr in {1..22}; do echo "$OUT/kg_chr${chr}"; done > "$OUT/kg_merge_list.txt"
   plink --merge-list "$OUT/kg_merge_list.txt" --keep-allele-order --threads $THREADS
   --make-bed --out "$OUT/kg_reference"
-
   ```
+
+ #### Step 3: Merge our data with the 1000 Genomes. 
+ Now we are ready to merge our data with 1000 genomes, filtered for the variants that overlap (we did this filtering in the above steps). In both datasets we now have variants named as chromosome:position:REF:ALT, so only those variants that overlap exactly in that sequence will be merged. 
+
+ ```bash
+Let's first make a textfile of the variants in 1000 genomes, and then filter our data for exactly those variants (so overlapping positions AND alleles).
+ cut -f2 "$OUT/kg_reference.bim" > "$OUT/kg_variants.txt"
+ plink2 --bfile "$OUT/pca_cohort" --extract "$OUT/kg_variants.txt" --threads $THREADS --make-bed --out "$OUT/pca_cohort_shared"
+
+Now the other way around: we make a textfile of the variants in our cohort and filter the 1000 genomes dataset for exactly those variants.
+ cut -f2 "$OUT/pca_cohort_shared.bim" > "$OUT/shared_variants.txt"
+ plink2 --bfile "$OUT/kg_reference" --extract "$OUT/shared_variants.txt" --threads $THREADS --make-bed --out "$OUT/kg_reference_shared"
+
+Now we have two datasets: one for our cohort and one for 1000 genomes, containing the pruned variants that are in both datasets. For us, all 104,471 variants that we had as output in step 1, were also in the 1000 Genomes data. We merge both files together:
+ plink --bfile "$OUT/pca_cohort_shared" --bmerge "$OUT/kg_reference_shared" --keep-allele-order --threads $THREADS --make-bed --out "$OUT/pca_merged"
+
+So we now ended this step with a merged dataset of 1000 genomes and our data, containing 104,471 variants and 3,374 individuals (870 of our cohort and 2,504 of 1000 genomes). Let's run the PCA!
+```
+
+ #### Step 4: Run the PCA. 
+ We will calculate the first 10 principal components. We will plot only the first two, but we will use all 10 in later analyses as covariates, to correct for ancestry. We have 3,374 individuals, so again fewer than 5000 above which PLINK recommends using the approx algorithm, but for the same reason as in step 1.3 we use it anyway together with the seed we set at the beginning. 
+
+
+
+  ```bash
+  plink2 --bfile "$OUT/pca_merged" --pca 10 approx --seed $SEED --threads $THREADS --out "$OUT/pca_with_reference"
+  ```
+
+  Then we plot PC1 against PC2, with the reference individuals coloured by superpopulation and our own individuals in grey.
+
+  ```bash
+  Rscript figures.R pca_reference
+  ```
+
+  <table>
+    <tr>
+      <td><img src="figures/pca_reference.png" alt="PC1 and PC2 of our cohort together with 1000 Genomes" width="500"></td>
+    </tr>
+    <tr>
+      <td align="center"><em>PC1 and PC2. Blue: African, red: Admixed-American, green: East-Asian, yellow: European, purple: South-Asian, dark grey: our cohort</em></td>
+    </tr>
+  </table>
+
+Most of the individuals in our cohort cluster along the European-African axis and also overlap the admixed American individuals. That is reassuring, since we expected this pattern for Brazilian individuals. We used an R code (see figures.R, the pca_reference step) to determine, for each individual, what ancestry they are closest to. For us, these are the results: 
+
+|Ancestry|N|
+|---|---|
+|African|17|
+|African-American|201|
+|European|651|
+|South-Asian|1|
+|East-Asian|0|
+
+## Phasing and imputation 
+SNP arrays measure a fixed set of genomic positions, while a GWAS tests millions of variants. Imputation fills in the genotypes we did not measure by comparing the genotypes in our cohort with a large reference panel. Before imputation, our data needs to be phased since for each individual we need to know what alleles lie together on the chromosome inherited from the mother and which one from the father (called haplotypes). We use the Beagle tool (but you can also use other tools, see the paper), which does the phasing and imputation in one go, as do other contemporary tools, so that we do not need a separate phasing tool. 
+
+
+For this step we need three more files, which we add to our configuration:
+* Beagle itself, which is a Java program (a .jar file), from https://faculty.washington.edu/browning/beagle/
+* The 1000 Genomes reference panel in Beagle's own bref3 format, one file per chromosome, from https://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes_phase3_v5a/b37.bref3/. This is the same panel as in step 1.9, only stored in a way Beagle reads quickly.
+* The genetic maps (plink.GRCh37.map), from https://bochet.gcc.biostat.washington.edu/beagle/genetic_maps/. These tell Beagle how likely it is that two positions are inherited together.
+
+  ```bash
+  BEAGLE=/path_to_beagle/beagle.27Feb25.75f.jar
+  BREF3_DIR=/path_to_beagle_reference
+  MAP_DIR=/path_to_genetic_maps
+  ```
+
+
+  #### Step 1: Write our data per chromosome
+
+  Beagle works on one chromosome at a time, and reads VCF files rather than PLINK files. So we write our harmonized data back to a VCF per chromosome.
+
+  ```bash
+  for chr in {1..22}; do
+    plink2 --bfile "$OUT/harmonization_finished" --chr ${chr} --export vcf bgz --threads $THREADS --out "$OUT/chr${chr}"
+  done
+  ```
+
+
+
+#### Step 2: Phase and impute
+
+  Beagle needs to be told our genotypes (gt), the reference panel (ref), the genetic map (map) and where to write the result (out). -Xmx24g gives Java 24 GB of memory, and seed makes the run reproducible,
+  just like in the PCA.
+
+  This is the heaviest step of the whole pipeline, so run it as a batch job.
+
+  ```bash
+  for chr in {1..22}; do
+    java -Xmx24g -jar "$BEAGLE" \
+      gt="$OUT/chr${chr}.vcf.gz" \
+      ref="$BREF3_DIR/chr${chr}.1kg.phase3.v5a.b37.bref3" \
+      map="$MAP_DIR/plink.chr${chr}.GRCh37.map" \
+      out="$OUT/chr${chr}_imputed" \
+      nthreads=$THREADS impute=true seed=$SEED
+  done
+  ```
+
+  Beagle writes one VCF per chromosome, containing every variant in the reference panel. It also replaces our Axiom variant names with the names of the reference panel (e.g. AX-33502681 becomes rs62224618),
+  which is useful later on when we have to match our variants with those in a GWAS.
+
+  For chromosome 22, our 6,940 variants became 424,147, and the whole chromosome took 1 minute and 17 seconds on 16 cores. One of our variants was dropped: it is in the legend file we used for
+  harmonization, but not in the reference panel itself, so Beagle has nothing to place it against.
+
+  #### Step 3: Post-imputation quality control
+
+  Not every imputed genotype is trustworthy. Beagle gives each variant a DR2 score between 0 and 1, which estimates how well it could impute that variant: 1 means certain, 0 means a guess. Variants that are
+  rare in the reference panel, or that lie far from any variant we measured, get a low score. We keep the variants with DR2 of at least 0.8, and again apply our minor allele frequency filter of 1%, which
+  we can now read straight from Beagle's AF field.
+
+  ```bash
+  for chr in {1..22}; do
+    bcftools view -i 'INFO/DR2>=0.8 && INFO/AF>=0.01 && INFO/AF<=0.99' -Oz -o "$OUT/chr${chr}_imputed_qc.vcf.gz" "$OUT/chr${chr}_imputed.vcf.gz"
+    bcftools index "$OUT/chr${chr}_imputed_qc.vcf.gz"
+  done
+  ```
+
+  For chromosome 22, 219,039 of the 424,147 variants (52%) had a DR2 of at least 0.8, and 132,112 were left after the frequency filter as well. That is still 19 times more variants than the 6,940 we
+  measured.
+
+   #### Step 4: Put the chromosomes back together
+
+  ```bash
+  for chr in {1..22}; do echo "$OUT/chr${chr}_imputed_qc.vcf.gz"; done > "$OUT/imputed_files.txt"
+  bcftools concat -f "$OUT/imputed_files.txt" -Oz -o "$OUT/imputed.vcf.gz"
+  bcftools index "$OUT/imputed.vcf.gz"
+  ```
+
+  Finally, we convert the result to PLINK format for the PRS steps. Note that we use --make-pgen and not --make-bed here: imputed genotypes are dosages (a number between 0 and 2 rather than 0, 1 or 2), and
+  only PLINK 2's own pgen format can store those. Writing a .bed file would round every dosage to a whole genotype and throw away the uncertainty that imputation gives us.
+
+  ```bash
+  plink2 --vcf "$OUT/imputed.vcf.gz" dosage=DS --double-id --threads $THREADS --make-pgen --out "$OUT/imputed"
+  ```
+
+
+
 
 
 
