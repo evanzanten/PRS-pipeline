@@ -697,18 +697,14 @@ For this step we need three more files, which we add to our configuration:
 
   ## 3. Calculating polygenic risk scores
 
-  A PRS adds up the risk alleles a person carries, each weighted by the effect
-  size that a GWAS found for it. The methods below all do that, but they differ
-  in how they decide which variants to include and how much to shrink the GWAS
-  effect sizes. We run several and compare them (section 3.7), because which one
-  works best depends on the trait, the GWAS and the cohort.
+  As you know by now, a PRS adds up all the risk alleles a person carries, weighted by the effect size that a GWAS found for that allele. The methods below all compute a PRS, but they differ in which variants are included in the PRS and how much the GWAS effect sizes are adjusted (shrunk). In the following steps, we will run several of these PRS methods and compare them, because which one works best depends on your cohort, the trait, and the GWAS you choose.
 
-  For all methods we need three things:
-  * our imputed genotypes from section 2 ("$OUT/imputed")
-  * the GWAS summary statistics of our trait
-  * the principal components from step 1.9, as covariates
+For all methods, we need the following three data: 
+1. Our genotypes that are now QC'd and imputed ("$OUT/imputed")
+2. The GWAS summary statistics of our trait
+3. The principal components from step 1.9, as covariates.
 
-  We add the summary statistics and the tools to our configuration:
+Let's again start with the configuration: 
 
   ```bash
   SUMSTATS=/path_to_sumstats/gwas_sumstats.txt
