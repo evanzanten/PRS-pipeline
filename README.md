@@ -736,10 +736,12 @@ GIGASTROKE reports each ancestry separately and also gives a meta-analysis over 
 
 Note that we also reported an "Effective N", which is what PRS methods often require in a case/control study rather than the total number of individuals. The effective sample size tells us what the N of a perfectly balanced (50% cases/50% controls) cohort should be to have the same power. This is useful since if you have e.g. 1000 cases and 100,000 controls, then the allele frequency estimation for the controls is very precise but for the cases not so much, decreasing your overall statistical power for any comparison you want to make. The PRS methods take this into account. 
 
-Now let's look at our GIGASTROKE summary statistics. We use the same zcat command as before since we have a gzipped file, then want to print the first 2 lines and for readability we add "column -t" so that the printed columns are separated by whitespace. 
- ```bash
-  zcat "$SUMSTATS" | head -2 | column -t 
+  #### Step 1: Look at what is in the file
+
+  ```bash
+  zcat "$SUMSTATS_DIR/GCST90104540_buildGRCh37.tsv.gz" | head -2 | column -t
   ```
+
   For us:
   ```
   chromosome  base_pair_location  effect_allele_frequency  beta
@@ -748,176 +750,459 @@ Now let's look at our GIGASTROKE summary statistics. We use the same zcat comman
   5           29439275            0.3566                   0.0069  0.0076
     0.3603   1.0069      0.9920    1.0220    T              C
   ```
-Two things that are noteworthy here: 
-1. This file is on GRCh37 (you can't see that here in the file directly, so you'll have to trust us that we indeed downloaded the correct genome build)
-2. What is visible from this snippet is that we do not have any rsIDs in this file. Oh no! Sometimes GWAS do not report rsID, just the genomic positions. No problem, we will add this to the file ourselves by matching on the variants in our cohort data.
 
-We match on chromosome, position and the two alleles, and then take the rsID of our own data. First, we list our own variants. The .pvar file of our imputed data has the chromosome, position, rsID, reference allele and alternative allele in columns 1-5. Let's also sort the alleles alphabetically into one key so that a variant is recognised whichever way round the files write it (so irrespective of what allele is called REF and which is called ALT). Also, some variants have no rsID and just report a dot "." at the column since the reference panel had no name for them either. We will give those their own name based on chr:pos:ref:alt, since otherwise the PRS tools would treat these as the same variant. This is easier to do in R, so let's do it there instead of using bash. 
+  Two things to notice, which decide what the next step has to do:
+  * The file is on build GRCh37, like our own data, so no liftover is needed.
+  (The GWAS Catalog also offers "harmonised" versions of these files. Those do
+  have variant names, but they are on GRCh38, so we would be mixing builds. We
+  use the GRCh37 file instead.)
+  * There is no variant name and no sample size column. So we cannot match on
+  rsID, and we will have to add both ourselves.
 
-```R
-library(data.table)
-#Our variants list first:
-our_data <- fread("output_dir/imputed.pvar")
+  #### Step 2: Put the summary statistics in the layout the tools want
 
-#Change the column names
-setnames(our_data, c("#CHROM","POS","ID","REF","ALT"), c("chr","pos","name","ref","alt"))
+  Whatever your GWAS file looks like, it has to be rewritten before any tool
+  will read it. Even a file that already has rsIDs needs this: the tools do not
+  agree on what the columns should be called, in what order they should come, or
+  whether they want a beta or an odds ratio.
 
-#Set the names of the variants without any rsID (".")
-ours[name == ".", name := paste(chr, pos, ref, alt, sep = ":")]
+  We therefore write one tidy file per GWAS, with nine columns: SNP CHR BP A1 A2
+  BETA SE P N. Each method then takes what it needs from that file, and the
+  section of each method says what that is.
 
-#and generate the key to lookup these variants in the gwas summary statistics file, with either ref or alt first (alphabetically ordered). 
-ours[, key := paste(chr, pos, pmin(ref, alt), pmax(ref, alt), sep = ":")]
+  Our files need one more thing: a variant name. Many GWAS report rsIDs, in
+  which case you keep that column. The GIGASTROKE files give a chromosome, a
+  position and two alleles, and no name at all.
 
+  Our own data does have names. During imputation, Beagle replaced our Axiom
+  probe names with the names of the reference panel, so every variant carries
+  the rsID that 1000 Genomes uses. We can therefore take the name from our own
+  data and attach it to the GWAS rows, matching on chromosome, position and
+  alleles.
 
-```
-
-  ### 3.2 Two target files
-
-  Some tools read PLINK 2 files with dosages, others only read the older .bed
-  format with whole genotypes. So we make both. Note that the .bed version
-  rounds every dosage to 0, 1 or 2 and therefore throws away the uncertainty of
-  the imputation; use it only for the tools that cannot do better.
+  That is a join between two tables, so it lives in a small R script,
+  match_sumstats.R, next to this page. Four settings at the top say which files
+  to use and what the effective N of that GWAS is. Run it once per ancestry arm.
 
   ```bash
-  plink2 --pfile "$OUT/imputed" --threads $THREADS --make-bed --out
-  "$OUT/imputed_hardcalls"
+  Rscript match_sumstats.R
   ```
 
-  We also write the principal components as a covariate file, which every method
-  uses to correct for ancestry.
+  Two details the script takes care of:
+  * It builds a key for each variant out of the chromosome, the position and the
+  two alleles **sorted alphabetically**, so that a variant is recognised
+  whichever way round a file writes its alleles (A/G here and G/A there are the
+  same variant).
+  * A few thousand of our variants have no rsID either, because the reference
+  panel has no name for them. Those get a name made of chromosome, position and
+  alleles, so that no two variants end up sharing a name.
+
+  A1 in the result is the effect allele: the allele the effect size belongs to.
+  Getting this wrong flips the score, so check the column names of your own GWAS
+  file before running the script.
+
+  For us, this takes about four minutes per file:
+
+  | Arm | Variants in the GWAS | Also in our data |
+  |---|---|---|
+  | European | 7,482,032 | 6,798,999 (91%) |
+  | African American | 8,357,162 | 6,339,230 (76%) |
+
+  Of our own 9,740,376 imputed variants, 6.8 million have a European effect
+  size. The rest are variants the GWAS did not report.
+
+  #### Step 3: Check that you picked the right allele column
+
+  This step confirms two things: that the variants really were matched to each
+  other, and that A1 in your file is the allele the effect sizes belong to.
+
+  The second is worth checking because nothing downstream will tell you. Every
+  PRS tool aligns on allele names and trusts the label: if A1 turns out to be
+  the other allele, the tools flip the effect sizes the wrong way without
+  complaining, and your score comes out backwards. Summary statistics files do
+  not agree on column names, and in some formats the column called A1 is the
+  allele the effect does not belong to. Getting it wrong while adapting the
+  script to a different GWAS is easy, and it leaves no trace.
+
+  The allele frequencies settle it, because they come from a different place
+  than the labels.
+
+  The two sides describe a variant differently, and it is worth being precise
+  about that. Our own data comes from a VCF, which knows only a reference allele
+  (REF) and an alternative allele (ALT); there is no such thing as an effect
+  allele in our files. PLINK reports the frequency of the ALT allele. The GWAS
+  knows nothing about REF and ALT: it has an effect allele, the one its effect
+  size belongs to, and an other allele.
+
+  So for each variant the GWAS effect allele is either the allele we call ALT or
+  the one we call REF, and that decides what we should see:
+  * effect allele is our ALT: the GWAS frequency and our ALT frequency are the
+  frequency of the same allele, so they should agree.
+  * effect allele is our REF: they are the frequencies of the two different
+  alleles of the same variant, so one should be one minus the other.
+
+  We therefore split the variants into those two groups and correlate the
+  frequencies within each.
 
   ```bash
-  awk 'NR==1 {print "FID IID PC1 PC2 PC3 PC4 PC5 PC6 PC7 PC8 PC9 PC10"; next}
-       {print $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12}'
-  "$OUT/pca_with_reference.eigenvec" > "$OUT/covariates.txt"
+  plink2 --pfile "$OUT/imputed" --freq --threads $THREADS --out
+  "$OUT/imputed_freq"
+  ```
+
+  ```r
+  frq <- fread("imputed_freq.afreq")
+  setnames(frq, c("ID","ALT","ALT_FREQS"), c("SNP","alt","our_af"))
+  m <- merge(merge(out, frq[, .(SNP, alt, our_af)], by = "SNP"),
+             gwas[, .(CHR = chromosome, BP = base_pair_location,
+                      A1 = effect_allele, gwas_af = effect_allele_frequency)],
+             by = c("CHR","BP","A1"))
+
+  cor(m[A1 == alt, gwas_af], m[A1 == alt, our_af])   # effect allele is our ALT:
+  expect about +1
+  cor(m[A1 != alt, gwas_af], m[A1 != alt, our_af])   # effect allele is our REF:
+  expect about -1
+  ```
+
+  For us these are +0.99 and -0.99, over 3.7 and 3.1 million variants, which is
+  what it should look like.
+
+  What the possible outcomes mean:
+  * **One near +1 and one near -1**: as expected.
+  * **Both with the same sign**: the column you took as the effect allele is the
+  other allele. Swap the two in the script.
+  * **Both near zero**: the variants are not matched to each other at all. The
+  usual cause is a different genome build on the two sides.
+  * **Weak but not absent**: check that the frequency column really is the
+  effect allele frequency and not the minor allele frequency, which some files
+  report instead.
+
+  ### 3.2 Target files, phenotype and covariates
+
+  Our imputed genotypes are dosages: a number between 0 and 2 rather than 0, 1
+  or 2. The methods do not all read the same file format, so we make three
+  versions of our data. None of them throws the dosages away where it matters:
+
+  | File | Format | Used by | For what |
+  |---|---|---|---|
+  | imputed.pgen | dosages | PLINK | calculating the final scores of every
+  method |
+  | imputed_bgen.bgen | dosages | PRSice-2 | clumping and scoring |
+  | imputed_variants.bim | variant list only | PRS-CS, PRS-CSx, LDpred2 | to
+  know which variants we have |
+
+  All three keep the dosages. PRS-CS, PRS-CSx and LDpred2 never look at our
+  genotypes at all while they work out the weights: they take the correlations
+  between variants from a reference panel, and only need to know which variants
+  we have. The weights they produce are then applied to our dosages with PLINK.
+
+  PRSice-2 reads dosages from a BGEN file. PLINK 2 writes the genotypes (.bgen)
+  and a list of the individuals (.sample) in one command.
+
+  ```bash
+  plink2 --pfile "$OUT/imputed" --export bgen-1.2 bits=8 id-paste=iid --threads
+  $THREADS --out "$OUT/imputed_bgen"
+  ```
+
+  Three things about this file, each of which cost us a failed run:
+  * **id-paste=iid**, for the same reason as in section 2.1: without it PLINK
+  glues the family ID and the individual ID together, the BGEN stores the
+  doubled name, and PRSice stops with "Sample mismatch between bgen and
+  phenotype file".
+  * **bits=8** stores each dosage in one byte, which rounds it slightly (a
+  dosage of 0.98 comes back as 0.9804).
+  * If you read the file back with PLINK, use **ref-last**: PLINK writes the
+  reference allele last in a BGEN file, and reading it with ref-first silently
+  swaps the alleles so that every dosage becomes 2 minus what it should be.
+
+  The .sample file that PLINK writes has two identifier columns, and PRSice
+  glues those together as well. We set the first one to 0, so that the
+  individual ID is used on its own:
+
+  ```bash
+  awk 'NR<=2 {print; next} {print 0, $2, $3, $4}' "$OUT/imputed_bgen.sample" >
+  "$OUT/tmp" && mv "$OUT/tmp" "$OUT/imputed_bgen.sample"
+  ```
+
+  Next the phenotype and the covariates. We take case/control status, sex and
+  age from the phenotype file, and the first 10 principal components from step
+  1.9.
+
+  Note the first command: our phenotype file was made on Windows, so every line
+  ends in an invisible carriage return. That character sticks to the last column
+  (age), and PRSice then reads 869 of our 870 ages as missing and quietly drops
+  those individuals. Removing it costs one command and an hour of confusion.
+
+  ```bash
+  tr -d '\r' < "$PHENO" > "$OUT/phenotype_clean.tsv"
+  ```
+
+  Both files must contain exactly the individuals of the BGEN file, in the same
+  order, with a single ID column (we use --ignore-fid below):
+
+  ```bash
+  awk 'NR>2 {print $1}' "$OUT/imputed_bgen.sample" > "$OUT/sample_order.txt"
+
+  awk -F'\t' 'BEGIN{OFS="\t"} NR>1 {p = ($4=="Case") ? 2 : ($4=="Control") ? 1 :
+  "NA"; print $3, p}' \
+      "$OUT/phenotype_clean.tsv" > "$OUT/pheno_lookup.txt"
+  awk 'BEGIN{OFS="\t"; print "IID","ISCHEMIC_STROKE"}
+       FNR==NR {p[$1]=$2; next} {print $1, ($1 in p ? p[$1] : "NA")}' \
+      "$OUT/pheno_lookup.txt" "$OUT/sample_order.txt" >
+  "$OUT/phenotype_prsice.txt"
+  ```
+
+  The covariate file is built the same way: sex (1 male, 2 female), age, and PC1
+  to PC10 from the eigenvec file, in the order of the sample file. For us this
+  gives 870 individuals with no missing values: 479 cases and 391 controls, 531
+  men and 339 women, mean age 61.2.
+
+  Finally the list of our variants, which is all that PRS-CS, PRS-CSx and
+  LDpred2 need from our genotypes:
+
+  ```bash
+  plink2 --pfile "$OUT/imputed" --threads $THREADS --make-just-bim --out
+  "$OUT/imputed_variants"
   ```
 
   ### 3.3 PRSice-2 (clumping and thresholding)
 
   The simplest approach: keep the variants with a p-value below some threshold,
   remove variants that are correlated with a stronger one nearby (clumping), and
-  add up what is left. PRSice-2 tries many p-value thresholds and reports which
-  one predicts our phenotype best.
+  add up what is left. Which threshold is best is not known in advance, so we
+  let PRSice write a score for every threshold (--all-score) and choose between
+  them in section 3.7, where we can do it without looking at the same people
+  twice.
+
+  PRSice-2 is the least fussy about the file: it reads any layout, as long as
+  you say on the command line which column is which (--snp, --chr, --bp, --A1,
+  --A2, --stat, --pvalue). Add --beta if the effect sizes are betas; without it
+  PRSice expects odds ratios.
 
   ```bash
-  Rscript "$PRSICE_DIR/PRSice.R" \
-      --prsice "$PRSICE_DIR/PRSice_linux" \
-      --base "$OUT/sumstats_clean.txt" \
-      --snp SNP --chr CHR --bp BP --A1 A1 --A2 A2 --stat BETA --pvalue P \
-      --target "$OUT/imputed_hardcalls" \
-      --pheno "$OUT/phenotype.txt" --cov "$OUT/covariates.txt" \
-      --binary-target T \
-      --clump-kb 250 --clump-r2 0.1 \
-      --thread $THREADS \
-      --out "$OUT/prsice"
+  "$PRSICE_DIR/PRSice_linux" \
+      --base "$OUT/sumstats_eur.txt" \
+      --snp SNP --chr CHR --bp BP --A1 A1 --A2 A2 --stat BETA --pvalue P --beta
+  \
+      --target "$OUT/imputed_bgen" --type bgen --ignore-fid --allow-inter \
+      --pheno "$OUT/phenotype_prsice.txt" --pheno-col ISCHEMIC_STROKE \
+      --cov "$OUT/covariates_prsice.txt" --cov-col
+  SEX,AGE,PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10 \
+      --binary-target T --thread $THREADS --seed $SEED \
+      --clump-kb 250kb --clump-r2 0.1 \
+      --fastscore --bar-levels
+  5e-08,1e-06,1e-05,0.0001,0.001,0.01,0.05,0.1,0.2,0.5,1 --all-score \
+      --out "$OUT/prsice_eur"
   ```
 
-  PRSice-2 writes the scores ("$OUT/prsice.best"), the results per threshold,
-  and a plot of variance explained against threshold.
+  --allow-inter lets PRSice write a temporary file with whole genotypes, which
+  it needs to do the clumping on dosage data. Without it PRSice runs for a
+  minute and then stops with a "std::runtime_error" that says nothing about the
+  cause.
 
-  For us: best threshold [number], [number] variants used, R2 = [number].
+  For us, with the European summary statistics: of the 6,798,999 variants,
+  1,022,323 were removed as ambiguous (A/T and C/G variants, where PRSice cannot
+  tell which strand they are on), leaving 5,776,676, and 237,700 after
+  clumping. The whole run took 8 minutes on 16 cores.
+
+  PRSice writes the score of every individual at every threshold
+  (prsice_eur.all_score), the result per threshold (prsice_eur.prsice) and the
+  threshold it considers best (prsice_eur.summary). We do not use that last
+  file: the R2 in it is measured in the same individuals that were used to pick
+  the threshold, which makes it too optimistic. Section 3.7 does that properly.
 
   ### 3.4 LDpred2
 
-  Instead of picking a p-value threshold, LDpred2 keeps all variants and shrinks
-  the effect sizes, using how strongly variants are correlated with each other.
-  It runs in R, in the bigsnpr package, and needs a correlation matrix per
-  chromosome, which it calculates from the target data or from a reference
-  panel.
+  Instead of picking a p-value threshold, LDpred2 keeps every variant and
+  shrinks the effect sizes, using how strongly variants are correlated with each
+  other. It runs in R, in the bigsnpr package. We use the "auto" version, which
+  learns the heritability and the proportion of variants with an effect from
+  the summary statistics themselves, so it needs no tuning in our own data.
+
+  LDpred2 needs a correlation matrix. It can calculate one from your own
+  genotypes, but that only works with a few thousand individuals or more: with
+  our 870 the correlations are too noisy and none of the chains converge (every
+  one of them returns NA). The authors therefore publish a reference, computed
+  in UK Biobank Europeans for 1.4 million HapMap3+ variants, and that is what we
+  use. It is a large download (14 GB, 29 GB unpacked) and comes with a file
+  describing the variants, map_hm3_plus.rds:
+
+  https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061
+
+  LDpred2 wants the summary statistics as a table with the chromosome, the
+  position, both alleles, the effect size, its standard error and the sample
+  size. The names are up to you, but snp_match looks for chr, pos, a0, a1 and
+  beta, so we rename our columns to those. Note that a1 is the effect allele and
+  a0 the other one, which is the opposite of what those names suggest in some
+  other tools.
 
   ```r
-  # [template: see https://privefl.github.io/bigsnpr/articles/LDpred2.html]
-  library(bigsnpr)
-  snp_readBed("imputed_hardcalls.bed")
-  obj <- snp_attach("imputed_hardcalls.rds")
-  # match the summary statistics to our variants, calculate the correlations per
-  chromosome,
-  # then run snp_ldpred2_auto()
-  ```
+  library(bigsnpr); library(data.table)
+  bigparallelr::set_blas_ncores(1)   # bigsnpr refuses to run if the BLAS
+  library is multi-threaded too
 
-  For us: [number] variants used, R2 = [number].
+  # which variants the reference covers, and our summary statistics matched to
+  them
+  map  <- readRDS("map_hm3_plus.rds")
+  ss   <- fread("sumstats_eur.txt")
+  setnames(ss, c("SNP","CHR","BP","A1","A2","BETA","SE","P","N"),
+               c("rsid","chr","pos","a1","a0","beta","beta_se","p","n_eff"))
+  info <- snp_match(ss, map[, c("chr","pos","a0","a1","rsid")], join_by_pos =
+  FALSE)
+
+  # the correlations, one chromosome at a time, keeping only the variants we
+  have
+  for (ch in 1:22) {
+    corr_ch  <- readRDS(paste0("LD_with_blocks_chr", ch, ".rds"))
+    # ... subset to our variants and add to one big matrix (see the script)
+  }
+
+  ldsc <- snp_ldsc(ld, length(ld), chi2 = (info$beta / info$beta_se)^2,
+                   sample_size = info$n_eff, blocks = NULL)
+  auto <- snp_ldpred2_auto(corr, info, h2_init = ldsc[["h2"]],
+                           vec_p_init = seq_log(1e-4, 0.2, 30), ncores = NCORES,
+                           allow_jump_sign = FALSE, shrink_corr = 0.95)
+  ```
+  LDpred2-auto runs 30 independent chains from different starting points. Chains
+  that wander off give a heritability of NA or a wildly different value from
+  the others, and are dropped; the weights are the average over the chains that
+  agree. If none of them agree, the model has not converged and the result
+  should not be used.
+
+  The weights are then applied to our dosages, exactly as for PRS-CS below.
 
   ### 3.5 PRS-CS
 
-  PRS-CS also shrinks the effect sizes, but uses a reference panel for the
-  correlations rather than our own data, so it does not need a large target
-  sample. It is run per chromosome and writes new effect sizes, which we then
-  apply with PLINK.
+  PRS-CS also shrinks the effect sizes, but takes the correlations from a
+  reference panel instead of from our own data, so it does not need a large
+  target sample. It only needs to know which variants we have, which is why the
+  .bim file from 3.2 is enough. Like LDpred2 it works on the HapMap3 variants.
+
+  PRS-CS is strict about the file. It wants exactly five columns, in this order:
+  the variant name, the effect allele, the other allele, then the effect size,
+  then its standard error or the p-value. The header names matter only in that
+  PRS-CS looks for the word BETA or OR in them to know whether column four is an
+  effect size or an odds ratio, and for SE or P to know what column five is.
+  Which column it reads is decided by the position, not by the name, so a file
+  with the right names in the wrong order is read as something else, and nothing
+  warns you.
+
+  It also wants the sample size as a single number on the command line: for a
+  case/control trait that is the effective N from 3.1 (236,506 for the European
+  arm), not the total number of people.
 
   ```bash
-  python "$PRSCS_DIR/PRScs.py" \
+  awk 'NR==1 {print "SNP\tA1\tA2\tBETA\tP"; next} {print
+  $1"\t"$4"\t"$5"\t"$6"\t"$8}' \
+      "$OUT/sumstats_eur.txt" > "$OUT/prscs_eur.txt"
+
+  for chr in {1..22}; do
+    python3 "$PRSCS_DIR/PRScs.py" \
       --ref_dir="$LD_REF_DIR/ldblk_1kg_eur" \
-      --bim_prefix="$OUT/imputed_hardcalls" \
-      --sst_file="$OUT/sumstats_clean.txt" \
-      --n_gwas=[GWAS sample size] \
-      --chrom=1-22 \
-      --seed=$SEED \
-      --out_dir="$OUT/prscs"
+      --bim_prefix="$OUT/imputed_variants" \
+      --sst_file="$OUT/prscs_eur.txt" \
+      --n_gwas=236506 --chrom=${chr} --seed=$SEED \
+      --out_dir="$OUT/prscs_out/eur"
+  done
   ```
 
-  The weights of all chromosomes are then added up into one score. Here we can
-  use the imputed dosages, since PLINK 2 reads them:
+  Each chromosome is independent, so this is a good candidate for a job array
+  rather than a loop. For us a small chromosome took 9 minutes and the whole
+  genome about an hour in parallel, giving weights for 1,082,490 variants.
+
+  The weights of all chromosomes are then applied to our dosages. In the file
+  that PRS-CS writes, column 2 is the variant name, column 4 the effect allele
+  and column 6 the weight:
 
   ```bash
-  cat "$OUT"/prscs*.txt > "$OUT/prscs_weights.txt"
+  cat "$OUT"/prscs_out/eur_pst_eff_*.txt > "$OUT/prscs_weights.txt"
   plink2 --pfile "$OUT/imputed" --score "$OUT/prscs_weights.txt" 2 4 6
   cols=+scoresums \
          --threads $THREADS --out "$OUT/prscs_score"
   ```
 
-  For us: [number] variants used, R2 = [number].
+  ### 3.6 Multi-ancestry methods: PRS-CSx
 
-  ### 3.6 Multi-ancestry methods: PRS-CSx and BridgePRS
+  PRS-CSx uses GWAS results from more than one ancestry at once, which matters
+  for an admixed cohort like ours: a score built only on a European GWAS
+  predicts less well in individuals with African or Native American ancestry. It
+  needs one summary statistics file and one LD reference panel per ancestry,
+  and all the panels in one directory together with the file
+  snpinfo_mult_1kg_hm3.
 
-  Both use GWAS results from more than one ancestry at the same time, which
-  matters for an admixed cohort like ours: a score built only on a European GWAS
-  predicts less well in individuals with African or Native American ancestry.
-  Both need one summary statistics file and one LD reference panel per ancestry.
+  We use the European and the African American arms. The Hispanic or Latin
+  American arm would be the closest match to our cohort, but that arm contains
+  our own samples, so it cannot be used. We leave out the East Asian and South
+  Asian arms because our PCA shows no individuals near those clusters: they
+  would add parameters without adding ancestry that we have.
+
+  The summary statistics files have the same five-column layout as for PRS-CS,
+  one per ancestry, and the sample sizes are given in the same order as the
+  populations.
 
   ```bash
-  python "$PRSCSX_DIR/PRScsx.py" \
+  for chr in {1..22}; do
+    python3 "$PRSCSX_DIR/PRScsx.py" \
       --ref_dir="$LD_REF_DIR" \
-      --bim_prefix="$OUT/imputed_hardcalls" \
-      --sst_file="$OUT/sumstats_eur.txt,$OUT/sumstats_afr.txt" \
-      --n_gwas=[N European],[N African] \
-      --pop=EUR,AFR \
-      --chrom=1-22 --seed=$SEED \
-      --out_dir="$OUT/prscsx" --out_name=stroke
+      --bim_prefix="$OUT/imputed_variants" \
+      --sst_file="$OUT/prscs_eur.txt,$OUT/prscs_afr.txt" \
+      --n_gwas=236506,3423 --pop=EUR,AFR \
+      --chrom=${chr} --seed=$SEED \
+      --out_dir="$OUT/prscsx_out" --out_name=stroke
+  done
   ```
 
-  ```bash
-  # [template: see https://www.bridgeprs.net/ for the exact arguments]
-  "$BRIDGEPRS_DIR/bridgePRS" ...
-  ```
-
-  For us: [number] variants used, R2 = [number].
+  PRS-CSx writes one set of weights per ancestry, which gives one score per
+  ancestry. Those are combined in section 3.7, by fitting how much weight each
+  deserves. Note that the African arm is small (894 cases), so its score carries
+  little information on its own; the point of the method is that it still
+  borrows strength across the two.
 
   ### 3.7 Comparing the scores
+  Each method gives every individual a score, and several of them leave a choice
+  open: which p-value threshold for PRSice-2, and how to weigh the two ancestry
+  scores of PRS-CSx. If we make that choice and then measure performance in the
+  same people, the result is too optimistic, because we picked the winner using
+  their phenotypes. This is why PRSice's own summary file reports an R2 that we
+  do not use.
 
-  Each method gives every individual a score. To compare them, we check how well
-  each score predicts the phenotype, always with the same covariates (age, sex
-  and the first 10 principal components), and always in individuals that were
-  not used to choose any settings.
+  We therefore use 5-fold cross-validation:
 
-  ```r
-  # [template]
-  # For each method: a logistic regression of case/control status on the score
-  plus covariates,
-  # and one with the covariates only. The difference in Nagelkerke R2 between
-  the two is the
-  # part explained by the score.
-  ```
+  1. Split the 870 individuals into 5 groups of about 174, with the same
+  case/control ratio in each.
+  2. Leave one group out. In the other four, find the setting that predicts
+  best.
+  3. Apply that setting to the group that was left out, and keep those scores.
+  4. Repeat until every group has been left out once.
+  5. Every individual now has a score from a model that never saw their
+  phenotype. Compute the R2 and AUC once, over all 870.
+
+  With our numbers each left-out group holds about 96 cases and 78 controls.
+  Because the split is random, it is worth repeating the whole procedure with a
+  With our numbers each left-out group holds about 96 cases and 78 controls.
+  Because the split is random, it is worth repeating the whole procedure with a
+  few different seeds and averaging.
+
+  For each method we fit a logistic regression of case/control status on the
+  score plus the covariates (sex, age and the first 10 principal components),
+  and one with the covariates only. The difference in Nagelkerke R2 between the
+  two is the part explained by the score.
 
   | Method | Variants used | R2 | AUC |
   |---|---|---|---|
-  | PRSice-2 | | | |
-  | LDpred2 | | | |
-  | PRS-CS | | | |
-  | PRS-CSx | | | |
-  | BridgePRS | | | |
+  | PRSice-2 | 237,700 after clumping | | |
+  | LDpred2 | 1,190,225 | | |
+  | PRS-CS | 1,082,490 | | |
+  | PRS-CSx (EUR+AFR) | 1,082,490 | | |
 
+  When comparing these numbers, keep in mind that the methods do not all use the
+  same variants: PRSice-2 works on all 5.8 million variants that survive its
+  ambiguity filter, while LDpred2, PRS-CS and PRS-CSx work on the 1.1 million
+  HapMap3 variants. Part of any difference between them is the variant set
+  rather than the method.
 
-
-
-
-
+  Finally, rather than splitting our cohort into ancestry groups and reporting
+  performance per group, which would leave us with groups of 17 individuals, we
+  test whether the score works equally well across the ancestry gradient: a
+  logistic regression with an interaction between the score and PC1. A
+  significant interaction means the score predicts better at one end of the
+  gradient than the other.
