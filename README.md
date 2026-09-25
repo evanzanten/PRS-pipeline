@@ -750,7 +750,27 @@ Now let's look at our GIGASTROKE summary statistics. We use the same zcat comman
   ```
 Two things that are noteworthy here: 
 1. This file is on GRCh37 (you can't see that here in the file directly, so you'll have to trust us that we indeed downloaded the correct genome build)
-2. What is visible from this snippet is that we do not have any rsIDs in this file. Oh no! Sometimes GWAS do not report rsID, just the genomic positions. No problem, we will add this to the file ourselves by matching on the variants in our cohort data. 
+2. What is visible from this snippet is that we do not have any rsIDs in this file. Oh no! Sometimes GWAS do not report rsID, just the genomic positions. No problem, we will add this to the file ourselves by matching on the variants in our cohort data.
+
+We match on chromosome, position and the two alleles, and then take the rsID of our own data. First, we list our own variants. The .pvar file of our imputed data has the chromosome, position, rsID, reference allele and alternative allele in columns 1-5. Let's also sort the alleles alphabetically into one key so that a variant is recognised whichever way round the files write it (so irrespective of what allele is called REF and which is called ALT). Also, some variants have no rsID and just report a dot "." at the column since the reference panel had no name for them either. We will give those their own name based on chr:pos:ref:alt, since otherwise the PRS tools would treat these as the same variant. This is easier to do in R, so let's do it there instead of using bash. 
+
+```R
+library(data.table)
+#Our variants list first:
+our_data <- fread("output_dir/imputed.pvar")
+
+#Change the column names
+setnames(our_data, c("#CHROM","POS","ID","REF","ALT"), c("chr","pos","name","ref","alt"))
+
+#Set the names of the variants without any rsID (".")
+ours[name == ".", name := paste(chr, pos, ref, alt, sep = ":")]
+
+#and generate the key to lookup these variants in the gwas summary statistics file, with either ref or alt first (alphabetically ordered). 
+ours[, key := paste(chr, pos, pmin(ref, alt), pmax(ref, alt), sep = ":")]
+
+
+```
+
   ### 3.2 Two target files
 
   Some tools read PLINK 2 files with dosages, others only read the older .bed
