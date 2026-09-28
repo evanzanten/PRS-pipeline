@@ -863,25 +863,30 @@ PRSice-2 is the least fussy about the file: it reads any layout, as long as you 
   LDpred2 needs a correlation matrix. It can calculate one from your own
   genotypes, but that only works with a few thousand individuals or more: with
   our 870 the correlations are too noisy, and instead the authors have published a reference (computed
-  in UK Biobank Europeans for 1.4 million HapMap3+ variants) that we will use. It is a large download (14 GB, 29 GB unpacked) and comes with a file
-  describing the variants, map_hm3_plus.rds, see [here]( https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061)
+  in UK Biobank Europeans for 1.4 million HapMap3+ variants) that we will use. It is a large download (14 GB, 29 GB unpacked) and comes with a file describing the variants, map_hm3_plus.rds, see [here]( https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061)
 
- 
+  The above file is the LD reference, and is two things in one folder: 
+  1. LD_with_blocks_chr1.rds to LD_with_blocks_chr22.rds, the correlations themselves, one file per chromosome.
+  2. map_hm3_plus.rds, a table with one row per variant, saying which variant each row of those correlation files refers to. It has 1,444,196 rows, in a fixed order: take the table's rows for chromosome 12, in order, and they line up one for one with the rows of the chromosome 12 correlation file. Besides the chromosome, position, alleles and rsID it carries an ld column, which we use below.
 
-  LDpred2 wants the summary statistics as a table with the chromosome, the
-  position, both alleles, the effect size, its standard error and the sample
-  size. The names are up to you, but snp_match looks for chr, pos, a0, a1 and
-  beta, so we rename our columns to those. Note that a1 is the effect allele and
-  a0 the other one, which is the opposite of what those names suggest in some
-  other tools.
+  Of its 1,444,196 variants, 1,190,225 also appear in our summary statistics,
+  and those are the ones we end up working with.
+
+For the summary statistics file, LDPred2 needs a table with chromosome, position, a1 (effect allele), a0 (other allele), effect size (BETA or OR), standard error, p-value and the sample size. The tool will look for these as column names chr, pos, a0, a1, beta, beta_se, and n_eff, so rename your sumstats file header to those names. Since LDPred2 works in R, we do the renaming there and run ldpred2 after that. The script is quite long, so we gave it its own file [here](https://github.com/evanzanten/PRS-pipeline/blob/main/ldpred2.R). At the top, you have to change the paths to where your files live and submit it to a cluster rather than running it on the terminal since it needs a few hours of cooking and about 64GB. 
+
+Rscript ldpred2.R
+
+Let's look through the script to understand it better: 
+* The script builds the correlation matrix on disk, and this matrix essentially says how strongly every variant is correlated with nearby variants in LD. Since the file contains 1.2 million variants in total, which is way more than fits in a computer's memory in one go when it comes to correlations between variants, this reference comes as one file per chromosome, so 22 files in total. The script writes the combined LD matrix to a file on disk instead of holding it in memory, which is what as_SFBM does, and add_columns adds the next chromosome onto what is already there.
+* The annoying part here is that the LD correlation matrix and the map_hm3_plus.rds number variants in two different ways, where map_hm3_plus.rds numbers variants from 1 to 1,444,196 straight through across all chromosomes at once, and the snp_match function hands us back these numbers in a column called _NUM_ID, but since we have the chromosomes split, each row within each correlation file starts at 1 again. So a variant that is row 800,000 of the table might be row 12,000 of the chromosome 12 file. The match function translates between the two by asking, for each of our variants, where it sits in the list of variants on this chromosome.
+
+
 
   ```r
   library(bigsnpr); library(data.table)
-  bigparallelr::set_blas_ncores(1)   # bigsnpr refuses to run if the BLAS
-  library is multi-threaded too
+  bigparallelr::set_blas_ncores(1)   # bigsnpr refuses to run if the BLAS library is multi-threaded too, so set one core for BLAS. 
 
-  # which variants the reference covers, and our summary statistics matched to
-  them
+  # which variants the reference covers, and our summary statistics matched to them
   map  <- readRDS("map_hm3_plus.rds")
   ss   <- fread("sumstats_eur.txt")
   setnames(ss, c("SNP","CHR","BP","A1","A2","BETA","SE","P","N"),
@@ -889,7 +894,7 @@ PRSice-2 is the least fussy about the file: it reads any layout, as long as you 
   info <- snp_match(ss, map[, c("chr","pos","a0","a1","rsid")], join_by_pos =
   FALSE)
 
-  # the correlations, one chromosome at a time, keeping only the variants we
+  # the correlation matrix downloaded above, one chromosome at a time, keeping only the variants we
   have
   for (ch in 1:22) {
     corr_ch  <- readRDS(paste0("LD_with_blocks_chr", ch, ".rds"))
