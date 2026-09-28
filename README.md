@@ -836,25 +836,21 @@ PRSice-2 is the least fussy about the file: it reads any layout, as long as you 
   ```bash
   "$PRSICE_DIR/PRSice_linux" \
       --base "$OUT/sumstats_eur.txt" \
-      --snp SNP --chr CHR --bp BP --A1 A1 --A2 A2 --stat BETA --pvalue P --beta
-  \
+      --snp SNP --chr CHR --bp BP --A1 A1 --A2 A2 --stat BETA --pvalue P --beta   \
       --target "$OUT/imputed_bgen" --type bgen --ignore-fid --allow-inter \
       --pheno "$OUT/phenotype_prsice.txt" --pheno-col ISCHEMIC_STROKE \
       --cov "$OUT/covariates_prsice.txt" --cov-col
   SEX,AGE,PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10 \
       --binary-target T --thread $THREADS --seed $SEED \
       --clump-kb 250kb --clump-r2 0.1 \
-      --fastscore --bar-levels
-  5e-08,1e-06,1e-05,0.0001,0.001,0.01,0.05,0.1,0.2,0.5,1 --all-score \
+      --fastscore --bar-levels 5e-08,1e-06,1e-05,0.0001,0.001,0.01,0.05,0.1,0.2,0.5,1 --all-score \
       --out "$OUT/prsice_eur"
   ```
 
   --allow-inter lets PRSice write a temporary file with whole genotypes, which it needs to do the clumping on dosage data.
 
   For us, with the European summary statistics: of the 6,798,999 variants, 1,022,323 were removed as ambiguous (A/T and C/G variants, where PRSice cannot tell which strand they are on), leaving 5,776,676, and 237,700 after clumping. PRSice writes the score of every individual at every threshold (prsice_eur.all_score), the result per threshold (prsice_eur.prsice) and the
-  threshold it considers best (prsice_eur.summary). We do not use that last
-  file: the R2 in it is measured in the same individuals that were used to pick
-  the threshold, which makes it too optimistic. Section 3.7 does that properly.
+  threshold it considers best (prsice_eur.summary). We do not use that last file: the R2 in it is measured in the same individuals that were used to pick the threshold, which makes it too optimistic. Section 3.7 does that properly.
 
   ### 3.4 LDpred2
 
@@ -866,13 +862,11 @@ PRSice-2 is the least fussy about the file: it reads any layout, as long as you 
 
   LDpred2 needs a correlation matrix. It can calculate one from your own
   genotypes, but that only works with a few thousand individuals or more: with
-  our 870 the correlations are too noisy and none of the chains converge (every
-  one of them returns NA). The authors therefore publish a reference, computed
-  in UK Biobank Europeans for 1.4 million HapMap3+ variants, and that is what we
-  use. It is a large download (14 GB, 29 GB unpacked) and comes with a file
-  describing the variants, map_hm3_plus.rds:
+  our 870 the correlations are too noisy, and instead the authors have published a reference (computed
+  in UK Biobank Europeans for 1.4 million HapMap3+ variants) that we will use. It is a large download (14 GB, 29 GB unpacked) and comes with a file
+  describing the variants, map_hm3_plus.rds, see [here]( https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061)
 
-  https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061
+ 
 
   LDpred2 wants the summary statistics as a table with the chromosome, the
   position, both alleles, the effect size, its standard error and the sample
