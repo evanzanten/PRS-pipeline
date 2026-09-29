@@ -885,21 +885,16 @@ Let's look through the script to understand it better:
   ```r
   library(bigsnpr); library(data.table)
   bigparallelr::set_blas_ncores(1)   # bigsnpr refuses to run if the BLAS library is multi-threaded too, so set one core for BLAS. 
-
-  # which variants the reference covers, and our summary statistics matched to them
-  map  <- readRDS("map_hm3_plus.rds")
-  ss   <- fread("sumstats_eur.txt")
-  setnames(ss, c("SNP","CHR","BP","A1","A2","BETA","SE","P","N"),
-               c("rsid","chr","pos","a1","a0","beta","beta_se","p","n_eff"))
-  info <- snp_match(ss, map[, c("chr","pos","a0","a1","rsid")], join_by_pos =
-  FALSE)
-
-  # the correlation matrix downloaded above, one chromosome at a time, keeping only the variants we
-  have
   for (ch in 1:22) {
-    corr_ch  <- readRDS(paste0("LD_with_blocks_chr", ch, ".rds"))
-    # ... subset to our variants and add to one big matrix (see the script)
+    ind.chr <- info$`_NUM_ID_`[info$chr == ch]        # store all variants on the chromosome in the ind.chr variable.
+    if (!length(ind.chr)) next # in case the list is empty, go to the next next chromosome 
+    ind.ref <- match(ind.chr, which(map$chr == ch))   #match between the map file (from the R script based on the specific chromosome we are currently looping on), then look for the variants in ind.chr for that chromosome. 
+    corr_ch <- readRDS(paste0(REF_DIR, "/LD_with_blocks_chr", ch,
+  ".rds"))[ind.ref, ind.ref] #Read in the correlation matrix for this chromosome, keeping only our variants in ind.ref
+    if (ch == 1) corr <- as_SFBM(corr_ch, tmp, compact = TRUE)
+    else         corr$add_columns(corr_ch, nrow(corr))
   }
+
 
   ldsc <- snp_ldsc(ld, length(ld), chi2 = (info$beta / info$beta_se)^2,
                    sample_size = info$n_eff, blocks = NULL)
