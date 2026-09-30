@@ -882,7 +882,7 @@
   values: 479 cases and 391 controls, 531 men and 339 women, mean age 61.2.
 
   A word on what the covariates are for, since it is a fair question: they play no part in building the score. A PRS is a weighted sum of your own dosages with weights taken from the GWAS, and nothing about
-  age, sex or ancestry enters that sum. The covariates belong to the model we use to judge the score in section 3.8. That is not a formality: a polygenic score is correlated with ancestry by construction,
+  age, sex or ancestry enters that sum. The covariates belong to the model we use to judge the score in section 3.7. That is not a formality: a polygenic score is correlated with ancestry by construction,
   because the allele frequencies it sums over differ between populations, so if cases and controls are not identically mixed then a score that knows nothing about the trait would still look predictive.
   Putting the PCs in the model removes that route.
 
@@ -1280,4 +1280,10 @@
   Compared to that, LDpred2 and PRS-CS are above 99.6% of the noise scores, so those are real. PRSice-2 sits exactly on the 90th percentile, meaning one noise score in ten does just as well, so it is
   suggestive at best. PRS-CSx is beaten by 40% of the noise scores and its AUC is exactly the noise average, so we have no evidence that it predicts anything at all. That is what you would expect though,
   since the second arm is much smaller (3,423 versus 236,506 effective individuals) and neither arm matches the ancestry of our cohort.
+
+  That check just costs you a couple of minutes and is a nice sanity check that we recommend. So run your pipeline once on a column of randomly generated PRS, and if your real PRS does not beat these random PRS by a wide margin, then your PRS brings nothing to the table. This check is suitable in case you used methods where you didn't have to make any choice on the parameters (PRS-CS and LDpred2), since their score is fixed. In case you used PRSice-2 and PRS-CSx you would, strictly speaking, need to shuffle the case/control labels and go through the cross-validation again, which we did not do here. 
+
+  Your next question, looking at the numbers in the table above with the R2 and AUC per method, could be why the R2 is so low. Do note that you have to interpret this R2 relative to the maximum heritability it CAN capture, which is between ~0.05-~0.07 as estimated by LDSC and LDpred2, respectively. So it isn't that low after all. Look at our winning method, LDpred2, which has an R2 of 0.0143 and an AUC of 0.587. LDPred2-auto estimated that about 1% of variants carry a real effect, so that would be around 13000 out of the 1.19 million we put in. It merely shrunk all variants but kept all the information, while a worse-performing tool like PRSice-2 throws away A LOT of variants and therefore contains less information, and that shows. 
+
+Now, finally, we are finished with the pipeline. Congratulations on computing your first PRS! I hope you learned something and that adding all these explanations to the code helped you make good decisions for your analysis. 
 
