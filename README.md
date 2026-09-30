@@ -28,8 +28,7 @@
   **3.4 LDpred2**
   **3.5 PRS-CS**
   **3.6 PRS-CSx**
-  **3.7 BridgePRS**
-  **3.8 Validation of the PRS**
+  **3.7 Validation of the PRS**
 
 
   ### Preparation
@@ -745,7 +744,6 @@
   PRSICE_DIR=/path_to_prsice
   PRSCS_DIR=/path_to_prscs
   PRSCSX_DIR=/path_to_prscsx
-  BRIDGEPRS_DIR=/path_to_bridgeprs
   LD_REF_DIR=/path_to_ld_reference
   ```
 
@@ -898,7 +896,7 @@
   ### 3.3 PRSice-2 (clumping and thresholding)
 
   PRSice-2 is the most straightforward approach, it keeps the variants with a p-value below some threshold, removes variants that are correlated with a stronger one nearby variant (clumping), and adds up
-  what is left. Which threshold is best is not known in advance, so we let PRSice write a score for every threshold (--all-score) and choose between them in section 3.8, where we can do it without looking
+  what is left. Which threshold is best is not known in advance, so we let PRSice write a score for every threshold (--all-score) and choose between them in section 3.7, where we can do it without looking
   at the same people twice.
   PRSice-2 is the least fussy about the file: it reads any layout, as long as you say on the command line which column is which (--snp, --chr, --bp, --A1, --A2, --stat, --pvalue). Add --beta if the effect
   sizes are betas; without it PRSice expects odds ratios.
@@ -920,7 +918,7 @@
 
   For us, with the European summary statistics: of the 6,798,999 variants, 1,022,323 were removed as ambiguous (A/T and C/G variants, where PRSice cannot tell which strand they are on), leaving 5,776,676,
   and 237,700 after clumping. PRSice writes the score of every individual at every threshold (prsice_eur.all_score), the result per threshold (prsice_eur.prsice) and the threshold it considers best
-  (prsice_eur.summary). We do not use that last file: the R2 in it is measured in the same individuals that were used to pick the threshold, which makes it too optimistic. Section 3.8 does that properly.
+  (prsice_eur.summary). We do not use that last file: the R2 in it is measured in the same individuals that were used to pick the threshold, which makes it too optimistic. Section 3.7 does that properly.
 
 
   ### 3.4 LDpred2
@@ -1109,7 +1107,7 @@
   done
   ```
 
-  PRS-CSx writes one set of weights per ancestry, which gives one score per ancestry. Those are combined in section 3.8, by fitting how much weight each deserves. Note that the African arm is small (894
+  PRS-CSx writes one set of weights per ancestry, which gives one score per ancestry. Those are combined in section 3.7, by fitting how much weight each deserves. Note that the African arm is small (894
   cases), so its score carries little information on its own; the point of the method is that it still borrows strength across the two.
 
   ```bash
@@ -1119,3 +1117,167 @@
            --threads $THREADS --out "$OUT/prscsx_${pop}_score"
   done
   ```
+
+
+  ### 3.7 Validation of the PRS
+
+  Each method gives every individual a score, and two of them leave a choice open: which p-value threshold to use for PRSice-2, and how much weight to give each of the two ancestry scores of PRS-CSx. If we
+  make that choice and then check how well it does in the same people, the result is too optimistic, since we picked the winner using their phenotypes. This is also why we do not use the R2 that PRSice
+  reports in its own summary file.
+
+  So let's first see how to assess the performance of a PRS. As mentioned in the paper, we fit two logistic regressions of case/control status: one with just our covariates (sex, age, first 10 PCs), and one
+  with the covariates AND the PRS. Both give a Nagelkerke R2, which tells us how much of the case/control pattern the model explains, and the difference between the two is the part that the PRS adds. From
+  the same models we also get the AUC, which is the discrimination of the model, i.e. the chance that a randomly picked case gets a higher predicted risk than a randomly picked control (0.5 meaning a coin
+  flip).
+
+  We do this with five-fold cross-validation, which works as follows in our cohort:
+
+  1. Split the 870 individuals into 5 groups of about 174, keeping the same case/control ratio in each (so roughly 96 cases and 78 controls per group).
+  2. Put one group aside and use only the other four to choose whatever the method leaves open:
+     - PRSice-2 gives us 11 scores, one per p-value threshold from 5e-08 to 1. We fit the two regressions above at each threshold in those four groups, and keep the threshold where the PRS adds the most.
+     - PRS-CSx gives us one score per ancestry. We fit a logistic regression on both at once in those four groups, which decides how much weight each ancestry gets.
+     - LDpred2 and PRS-CS have nothing to choose, so for them this step does nothing.
+  3. Apply that choice to the group we put aside, and keep those scores. This is the whole point: the choice was made without ever seeing the phenotypes of these individuals.
+  4. Repeat until every group has been put aside once.
+  5. Everyone now has a score from a model that never saw their own phenotype. We put all 870 of those scores in one column, fit the two regressions on all 870 at once, and report the difference in
+  Nagelkerke R2 plus the AUC of the second model. Note that we use everybody here: the folds have already done their job, and an R2 from one group of 174 people would be far noisier than one estimate over
+  870.
+
+  Note what does and does not get recomputed here. The PRS itself is computed once, before all of this, and never again: the weights come from the GWAS and PLINK applies them to our dosages. The folds only
+  pick between scores that already exist (PRSice-2) or work out how to combine them (PRS-CSx). This is only possible because the weights never used our phenotypes to begin with. If a method estimated its
+  weights from your own data, you would have to redo that inside every fold.
+
+  Since the split into 5 groups is random, we repeat the whole thing 500 times and take the average. One split is just one draw: with only five repeats, PRSice-2 came out anywhere between 0.002 and 0.007
+  depending on the seed we used. At 500 repeats the average settles down to about three decimals, so do not read too much into the last digit.
+
+  Let's do this final step in R again:
+
+  ```r
+  library(data.table)
+
+  REPEATS <- 500
+
+  ##First we read in the phenotype file, the covariates, and one column per PRS method
+  d <- merge(fread("phenotype_prsice.txt"), fread("covariates_prsice.txt"), by = "IID")
+  d[, y := ISCHEMIC_STROKE - 1]   #PLINK codes cases 2 and controls 1, but glm() wants 1 and 0, hence the -1
+
+  add_score <- function(d, name, file, col = "SCORE1_AVG") {
+    s <- fread(file, select = c("IID", col))
+    setnames(s, col, name)
+    merge(d, s, by = "IID")
+  }
+  d <- add_score(d, "ldpred2", "ldpred2_score.sscore")
+  d <- add_score(d, "prscs",   "prscs_score.sscore")
+  d <- add_score(d, "csx_EUR", "prscsx_EUR_score.sscore")
+  d <- add_score(d, "csx_AFR", "prscsx_AFR_score.sscore")
+
+  #PRSice puts all its thresholds in one file and repeats the ID in an FID column, so we drop FID
+  #while reading it in (leaving it in gives us two ID columns and the merge breaks)
+  prsice     <- fread("prsice_eur.all_score", drop = "FID")
+  thresholds <- setdiff(names(prsice), "IID")
+  d <- merge(d, prsice, by = "IID")
+
+  ##Now we specify the two models: M0 with just the covariates, M1 with the covariates plus a
+  ##column called "score". The reformulate() function builds the model formula from a list of
+  ##column names, so that we do not have to type out twelve terms by hand.
+  COVARIATES <- c("SEX", "AGE", paste0("PC", 1:10))
+  M0 <- reformulate(COVARIATES, "y")
+  M1 <- reformulate(c(COVARIATES, "score"), "y")
+
+  measure <- function(x) {
+    m0 <- glm(M0, x, family = binomial)   #logistic regression for M0
+    m1 <- glm(M1, x, family = binomial)   #logistic regression for M1
+    #Deviance is a measure of how badly a model fits, so the lower the better. Here we check how
+    #much further the deviance fell when we added the PRS, per person (hence nrow(x)). The
+    #numerator on its own is the Cox-Snell R2, which for a yes/no outcome can never reach 1. Its
+    #highest possible value is the denominator, so dividing by it puts the number back on a 0 to 1
+    #scale. That is what makes it Nagelkerke.
+    r2 <- (1 - exp((deviance(m1) - deviance(m0)) / nrow(x))) /
+          (1 - exp(-deviance(m0) / nrow(x)))
+    #Now the AUC. We ask the model to predict the probability of being a case (hence
+    #type = "response", otherwise it gives log-odds), and rank those probabilities from 1 (lowest)
+    #to 870 (highest). We then sum the ranks of the cases, which should be high if the model is any
+    #good, and subtract the lowest sum it could possibly have been (1 + 2 + 3 ... if the cases had
+    #the lowest ranks). What is left is the number of case/control pairs where the case ranks above
+    #the control, and n1*n0 is simply how many such pairs there are.
+    rk <- rank(predict(m1, type = "response"))
+    n1 <- sum(x$y == 1); n0 <- sum(x$y == 0)
+    list(r2 = r2, auc = (sum(rk[x$y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0))
+  }
+
+  ##Then the cross-validation. The tune() function gets the training rows and the held-out rows,
+  ##and gives back scores for the held-out ones. A method with nothing to tune simply ignores the
+  ##training rows.
+  run <- function(name, tune) {
+    r2 <- auc <- numeric(REPEATS)
+    for (i in 1:REPEATS) {
+      fold <- integer(nrow(d))    #a vector of 870 zeros, no group numbers in it yet
+      #rep_len writes 1,2,3,4,5,1,2,3,... until it is as long as the group in question, and
+      #sample() shuffles it. We do the cases and the controls separately (hence the loop over
+      #v = 0 and v = 1) so that every group ends up with the same case/control mix.
+      for (v in 0:1) fold[d$y == v] <- sample(rep_len(1:5, sum(d$y == v)))
+      held <- numeric(nrow(d))    #again 870 empty slots, one per person, for their score
+      #k is the group we put aside this time, so fold == k are its rows and fold != k are the rows
+      #of the other four. After five rounds everyone has been put aside exactly once.
+      for (k in 1:5) held[fold == k] <- tune(which(fold != k), which(fold == k))
+      d$score <- held
+      m <- measure(d)             #both models, on all 870 at once
+      r2[i] <- m$r2; auc[i] <- m$auc
+    }
+    cat(sprintf("%-10s R2 = %.4f (sd %.4f)   AUC = %.3f\n", name, mean(r2), sd(r2), mean(auc)))
+  }
+
+  ##Now let's apply all of this to our PRS methods!
+  set.seed(1)   #so that the folds come out the same way every time we run it
+
+  #LDpred2 and PRS-CS have nothing we need to choose, so we just read the score off as it is and
+  #ignore the training rows. This is also why their standard deviation below is exactly zero.
+  run("LDpred2", function(train, held_out) d$ldpred2[held_out])
+  run("PRS-CS",  function(train, held_out) d$prscs[held_out])
+
+  #PRSice: we try every threshold in the training rows and keep the one that adds the most. Note
+  #the x <- d[train], which takes a copy: writing into d itself here would overwrite the column
+  #that run() is busy filling in.
+  run("PRSice-2", function(train, held_out) {
+    gain <- sapply(thresholds, function(t) {
+      x <- d[train]; x$score <- x[[t]]; measure(x)$r2
+    })
+    d[[ thresholds[which.max(gain)] ]][held_out]
+  })
+
+  #PRS-CSx: we fit how much weight each ancestry score deserves, in the training rows
+  run("PRS-CSx", function(train, held_out) {
+    fit <- glm(y ~ csx_EUR + csx_AFR, d[train], family = binomial)
+    as.numeric(predict(fit, newdata = d[held_out]))
+  })
+  ```
+
+  For us this gives:
+
+  | Method | Variants used | R2 | AUC |
+  |---|---|---|---|
+  | LDpred2 | 1,190,225 | 0.0143 | 0.587 |
+  | PRS-CS | 1,082,490 | 0.0135 | 0.585 |
+  | PRSice-2 | 237,700 after clumping | 0.0041 (sd 0.0034) | 0.573 |
+  | PRS-CSx (EUR+AFR) | 1,082,490 and 913,987 | 0.0011 (sd 0.0014) | 0.570 |
+
+  Note that our covariates on their own already give an AUC of 0.567, so that is the starting point for this column rather than 0.5: age, sex and the PCs are in the model already, and the PRS only has to
+  beat them.
+
+  Two of these have a standard deviation and two do not. PRSice-2 and PRS-CSx are tuned inside each fold, so their result depends on how the split happened to fall, and the standard deviation tells us how
+  much a single five-fold run would move around. LDpred2 and PRS-CS need no tuning, so the same score is used in every fold and their standard deviation is exactly zero by construction. That is a property
+  of the procedure, not a sign that they are measured more precisely.
+
+  **Do check that your PRS beats random noise.** Since the regression coefficients are fitted in the same 870 people that we then measure the R2 in, adding any column at all buys us a little bit of R2,
+  whether it contains signal or not. To see how much, we ran the exact same measurement on 2,000 scores of pure random numbers:
+
+  | | R2 | AUC |
+  |---|---|---|
+  | noise, mean | 0.0015 | 0.570 |
+  | noise, median | 0.0007 | |
+  | noise, 90th percentile | 0.0041 | 0.575 |
+
+  Compared to that, LDpred2 and PRS-CS are above 99.6% of the noise scores, so those are real. PRSice-2 sits exactly on the 90th percentile, meaning one noise score in ten does just as well, so it is
+  suggestive at best. PRS-CSx is beaten by 40% of the noise scores and its AUC is exactly the noise average, so we have no evidence that it predicts anything at all. That is what you would expect though,
+  since the second arm is much smaller (3,423 versus 236,506 effective individuals) and neither arm matches the ancestry of our cohort.
+
