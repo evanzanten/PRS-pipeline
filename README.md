@@ -852,89 +852,95 @@ PRSice-2 is the least fussy about the file: it reads any layout, as long as you 
   For us, with the European summary statistics: of the 6,798,999 variants, 1,022,323 were removed as ambiguous (A/T and C/G variants, where PRSice cannot tell which strand they are on), leaving 5,776,676, and 237,700 after clumping. PRSice writes the score of every individual at every threshold (prsice_eur.all_score), the result per threshold (prsice_eur.prsice) and the
   threshold it considers best (prsice_eur.summary). We do not use that last file: the R2 in it is measured in the same individuals that were used to pick the threshold, which makes it too optimistic. Section 3.7 does that properly.
 
+  
+
   ### 3.4 LDpred2
 
-  Instead of picking a p-value threshold, LDpred2 keeps every variant and
-  shrinks the effect sizes, using how strongly variants are correlated with each
-  other. It runs in R, in the bigsnpr package. We use the "auto" version, which
-  learns the heritability and the proportion of variants with an effect from
-  the summary statistics themselves, so it needs no tuning in our own data.
+  Instead of picking a p-value threshold, LDpred2 keeps every variant and shrinks the effect sizes, using how strongly variants are correlated with each other. It runs in R, in the bigsnpr package. We use the "auto" version, which learns the heritability and the proportion of variants with an effect from the summary statistics themselves, so it needs no tuning in our own data.
+ 
+ LDpred2 needs a correlation matrix. It can calculate one from your own genotypes, but that only works with a few thousand individuals or more: with our 870 the correlations are too noisy, and instead the authors have published a reference (computed in UK Biobank Europeans for 1.4 million HapMap3+ variants) that we will use. It is a large download (14 GB, 29 GB unpacked) and comes with a file describing the variants: map_hm3_plus.rds, see [here]( https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061)
 
-  LDpred2 needs a correlation matrix. It can calculate one from your own
-  genotypes, but that only works with a few thousand individuals or more: with
-  our 870 the correlations are too noisy, and instead the authors have published a reference (computed
-  in UK Biobank Europeans for 1.4 million HapMap3+ variants) that we will use. It is a large download (14 GB, 29 GB unpacked) and comes with a file describing the variants, map_hm3_plus.rds, see [here]( https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061)
+  We call that download the LD reference, and it is two things in one folder:
 
-  The above file is the LD reference, and is two things in one folder: 
-  1. LD_with_blocks_chr1.rds to LD_with_blocks_chr22.rds, the correlations themselves, one file per chromosome.
-  2. map_hm3_plus.rds, a table with one row per variant, saying which variant each row of those correlation files refers to. It has 1,444,196 rows, in a fixed order: take the table's rows for chromosome 12, in order, and they line up one for one with the rows of the chromosome 12 correlation file. Besides the chromosome, position, alleles and rsID it carries an ld column, which we use below.
+  - LD_with_blocks_chr1.rds to LD_with_blocks_chr22.rds, the correlations themselves, one file per chromosome.
+  - map_hm3_plus.rds, a table with one row per variant, saying which variant each row of those correlation files refers to. It has 1,444,196 rows, in a fixed order: take the table's rows for chromosome 12,
+    in order, and they line up one for one with the rows of the chromosome 12 correlation file. Besides the chromosome, position, alleles and rsID it carries an ld column, which we use below.
 
-  Of its 1,444,196 variants, 1,190,225 also appear in our summary statistics,
-  and those are the ones we end up working with.
+  Of its 1,444,196 variants, 1,190,225 also appear in our summary statistics, and those are the ones we end up working with.
 
-For the summary statistics file, LDPred2 needs a table with chromosome, position, a1 (effect allele), a0 (other allele), effect size (BETA or OR), standard error, p-value and the sample size. The tool will look for these as column names chr, pos, a0, a1, beta, beta_se, and n_eff, so rename your sumstats file header to those names. Since LDPred2 works in R, we do the renaming there and run ldpred2 after that. The script is quite long, so we gave it its own file [here](https://github.com/evanzanten/PRS-pipeline/blob/main/ldpred2.R). At the top, you have to change the paths to where your files live and submit it to a cluster rather than running it on the terminal since it needs a few hours of cooking and about 64GB. 
-
-Rscript ldpred2.R
-
-Let's look through the script to understand it better: 
-* The script builds the correlation matrix on disk, and this matrix essentially says how strongly every variant is correlated with nearby variants in LD. Since the file contains 1.2 million variants in total, which is way more than fits in a computer's memory in one go when it comes to correlations between variants, this reference comes as one file per chromosome, so 22 files in total. The script writes the combined LD matrix to a file on disk instead of holding it in memory, which is what as_SFBM does, and add_columns adds the next chromosome onto what is already there.
-* The annoying part here is that the LD correlation matrix and the map_hm3_plus.rds number variants in two different ways, where map_hm3_plus.rds numbers variants from 1 to 1,444,196 straight through across all chromosomes at once, and the snp_match function hands us back these numbers in a column called _NUM_ID, but since we have the chromosomes split, each row within each correlation file starts at 1 again. So a variant that is row 800,000 of the table might be row 12,000 of the chromosome 12 file. The match function translates between the two by asking, for each of our variants, where it sits in the list of variants on this chromosome.
+  LDpred2 wants the summary statistics as a table with the chromosome, the position, both alleles, the effect size, its standard error and the sample size. The names are up to you, but snp_match looks for
+  chr, pos, a0, a1 and beta, so we rename our columns to those. Note that a1 is the effect allele and a0 the other one, which is the opposite of what those names suggest in some other tools.
 
 
+ LDpred2 works in R by the bigsnpr package, so this code will be in R, not in bash. 
 
-  ```r
-  library(bigsnpr); library(data.table)
-  bigparallelr::set_blas_ncores(1)   # bigsnpr refuses to run if the BLAS library is multi-threaded too, so set one core for BLAS. 
-  for (ch in 1:22) {
-    ind.chr <- info$`_NUM_ID_`[info$chr == ch]        # store all variants on the chromosome in the ind.chr variable.
-    if (!length(ind.chr)) next # in case the list is empty, go to the next next chromosome 
-    ind.ref <- match(ind.chr, which(map$chr == ch))   #match between the map file (from the R script based on the specific chromosome we are currently looping on), then look for the variants in ind.chr for that chromosome. 
-    corr_ch <- readRDS(paste0(REF_DIR, "/LD_with_blocks_chr", ch,
-  ".rds"))[ind.ref, ind.ref] #Read in the correlation matrix for this chromosome, keeping only our variants in ind.ref
-    if (ch == 1) corr <- as_SFBM(corr_ch, tmp, compact = TRUE)
-    else         corr$add_columns(corr_ch, nrow(corr))
+ ```R
+library(bigsnpr); library(data.table)
+
+#Let's first make the configuration again
+GWAS <- "sumstats_eur.txt" #the sumstats file from 3.1 
+REF_DIR <- "ldpred2_reference" #the unpacked LD reference (see above for download)
+CORR <- "ldpred2_corr" #Where to write the correlation matrix
+OUTFILE <- "ldpred2_weights.txt"
+NCORES <- 8
+
+bigparallelr::set_blas_ncores(1) #bigsnpr needs the BLAS library single-threaded (otherwise they will compete for cores and fail)
+
+#Step 1: match sumstats with the variants in the ldpred2 reference. a1 is the effect allele, a0 the other allele. Note this is the opposite of what those names mean in other tools!
+ref <- readRDS(file.path(REF_DIR, "map_hm3_plus.rds")) #Read in the ldpred2 reference panel 
+ ss  <- fread(GWAS) #read in sumstats
+ setnames(ss, c("SNP","CHR","BP","A1","A2","BETA","SE","P","N"),
+               c("rsid","chr","pos","a1","a0","beta","beta_se","p","n_eff")) #change sumstats colnames 
+ info <- snp_match(ss, map[, c("chr","pos","a0","a1","rsid","ld")], join_by_pos = FALSE) #and match between the two datasets
+
+#Step 2: build the LD correlation matrix per chromosome. The snp_match function from step 1 gives the "_NUM_ID" column, which is the rownumber of the variant but in the WHOLE dataset, while we do this on a per-chromosome basis, so we have to check within each chromosome where the variant sits within that chromosome. For example, if we have a variant at row 712,000 in the whole dataset, we want to check where in the chromosome file it sits, which could be e.g. row 12,000.
+for (ch in 1:22) {
+ind <- match(info$`_NUM_ID_`[info$chr == ch], which(map$chr == ch))
+corr_ch <- readRDS(file.path(REF_DIR, paste0("LD_with_blocks_chr", ch, ".rds")))[ind, ind] #Read in the LD information for this chromosome, keeping only the variants we stored in the ind variable.
+corr <- as_SFBM(corr_ch, CORR, compact = TRUE) #Here we create the LD correlation matrix, as_SFBM is a file with a lot of zeros (many variants are not correlated) and only the non-zeros are stored on disk to save space. 
+corr$add_columns(corr_ch, nrow(corr)) #We add one column of the correlation matrix per chromosome, appending a chromosome per iteration of the for loop. We use nrow(corr) to check how many variants have accumulated, so that each new block is placed below and to the right of the last. The resulting matrix has diagonal blocks, one block per chromosome and zeros everywhere else (there is no correlation between chromosomes)
   }
 
+#Step 3: estimate the heritability of the trait
+the first step in really computing the prs is using ldsc (LD score regression) to estimate the SNP-based heritability of the trait you are computing your PRS for, which is used as a 'baseline'/ ceiling of how much the prs can explain (see paper for thorough explanation on this). It takes the number of neighboring variants for each variant (info$ld), how many variants the LD scores were counted over (ld_size, note you have to add the whole reference, not just the variants also covered by the GWAS!), the effect size given its standard error, and the sample size. blocks=NULL is used [why?] 
 
-  ldsc <- snp_ldsc(ld, length(ld), chi2 = (info$beta / info$beta_se)^2,
-                   sample_size = info$n_eff, blocks = NULL)
-  auto <- snp_ldpred2_auto(corr, info, h2_init = ldsc[["h2"]],
-                           vec_p_init = seq_log(1e-4, 0.2, 30), ncores = NCORES,
-                           allow_jump_sign = FALSE, shrink_corr = 0.95)
-  ```
-  LDpred2-auto runs 30 independent chains from different starting points. Chains
-  that wander off give a heritability of NA or a wildly different value from
-  the others, and are dropped; the weights are the average over the chains that
-  agree. If none of them agree, the model has not converged and the result
-  should not be used.
+ldsc <- snp_ldsc(info$ld, ld_size = nrow(map), chi2 = (info$beta / info$beta_se)^2, sample_size = info$n_eff, blocks = NULL)
 
-  The weights are then applied to our dosages, exactly as for PRS-CS below.
+#Step 4: run ldpred2. We add the heritability estimated by ldsc so that the model starts estimating from that value, and by adding the 0.001 we guard against ldsc returning 0 or a negative number. The values in the vec_p_init function are recommended by the LDpred2 authors if you use an external LD panel to estimate correlations (not your own cohort), so we will use that. In that function, we apply a range of starting guesses for p (the proportion of variants that actually carry an effect, so the polygenicity of the trait). It means 'we want to test out 30 values spaced evenly on a log scale from 0.0001 to 0.2, which in basic language is that we will test how many variants actually carry an effect i.e. how polygenic the trait really is. allow_jump_sign = FALSE stops a run flipping a variant's effect from one
+  extreme to the other in a single step, which keeps the runs steadier. shrink_corr = 0.95 nudges the correlations slightly towards zero, to allow for the reference not being our own cohort.
+
+auto <- snp_ldpred2_auto(corr, info, h2_init = max(ldsc[["h2"]], 0.001), 
+vec_p_init = seq_log(1e-4, 0.2, 30), ncores=NCORES,
+allow_jump_sign=FALSE, shrink_corr=0.95) 
+
+#Step 5: keep the runs that agree. We apply (sapply) a function to the dataset we created above, which returns estimations of the heritability explained by the snps in our data. We just want those that agree with one another, and they have to make sense (be a finite, non-zero number), hence the second command. If none of the 30 runs returned anything sensible, the script will refuse to write a file. We then take the median estimated heritability and keep the runs within 30% of that value (for us, we kept all the runs), then the command starting with rowMeans() averages the estimated (shrunk) effect sizes across the runs and returns them into a matrix. The output is a dataframe with rsid, the effect allele, and the estimated effect sizes. 
+h2s <-  sapply(auto, function(a) a$h2_est)
+  ok  <- which(is.finite(h2s) & h2s > 0)
+  if (!length(ok)) stop("LDpred2-auto did not converge: no weights written")
+  med  <- median(h2s[ok])
+  keep <- ok[h2s[ok] > 0.7 * med & h2s[ok] < 1.4 * med]
+
+  beta <- rowMeans(as.matrix(sapply(auto[keep], function(a) a$beta_est)))
+  out  <- data.frame(SNP = info$rsid, A1 = info$a1, BETA = beta)
+  fwrite(out[is.finite(out$BETA), ], OUTFILE, sep = "\t")
+
+#Step 6: compute the prs. We do this in plink, and we tell plink where our snp, effect allele, and effect size columns are, which are columns 1, 2 and 3, respectively, for us. 
+ plink2 --pfile "$OUT/imputed" --score "$OUT/ldpred2_weights.txt" 1 2 3 header \
+         --threads $THREADS --out "$OUT/ldpred2_score"
 
   ### 3.5 PRS-CS
 
-  PRS-CS also shrinks the effect sizes, but takes the correlations from a
-  reference panel instead of from our own data, so it does not need a large
-  target sample. It only needs to know which variants we have, which is why the
-  .bim file from 3.2 is enough. Like LDpred2 it works on the HapMap3 variants.
+  PRS-CS works similarly to LDpred2 in that it also shrinks the effect sizes, and it also takes correlations between variants from an external LD panel in case your cohort is not very large (<1000). PRS-CS needs to know which variants we have (hence the .bim file from 3.2), and also works on the HapMap3 variants. It is very strict about the format of the sumstats file you provide! It wants exactly five columns, in this order: variant name, effect allele, other allele, effect size, standard error or p-value. The names of the columns matter only for the BETA/OR column, since the tool will look for one of those names in the fourth column, and same for the fifth column, which should be either SE or P. It also wants the sample size as a single number on the command line, see 3.1 (case/control trait it is the effective N, for a continuous trait the total N). 
 
-  PRS-CS is strict about the file. It wants exactly five columns, in this order:
-  the variant name, the effect allele, the other allele, then the effect size,
-  then its standard error or the p-value. The header names matter only in that
-  PRS-CS looks for the word BETA or OR in them to know whether column four is an
-  effect size or an odds ratio, and for SE or P to know what column five is.
-  Which column it reads is decided by the position, not by the name, so a file
-  with the right names in the wrong order is read as something else, and nothing
-  warns you.
-
-  It also wants the sample size as a single number on the command line: for a
-  case/control trait that is the effective N from 3.1 (236,506 for the European
-  arm), not the total number of people.
+Let's roll: 
 
   ```bash
+#First we format the sumstats in the way PRS-CS wants it: 
   awk 'NR==1 {print "SNP\tA1\tA2\tBETA\tP"; next} {print
   $1"\t"$4"\t"$5"\t"$6"\t"$8}' \
-      "$OUT/sumstats_eur.txt" > "$OUT/prscs_eur.txt"
+      "$OUT/sumstats_eur.txt" > "$OUT/prscs_eur.txt" 
 
+#Again we run PRS-CS per chromosome, adding the path to the PRS-CS LD reference panel, the .bim file, the sumstats file and providing the effective sample size. 
   for chr in {1..22}; do
     python3 "$PRSCS_DIR/PRScs.py" \
       --ref_dir="$LD_REF_DIR/ldblk_1kg_eur" \
@@ -945,25 +951,17 @@ Let's look through the script to understand it better:
   done
   ```
 
-  Each chromosome is independent, so this is a good candidate for a job array
-  rather than a loop. For us a small chromosome took 9 minutes and the whole
-  genome about an hour in parallel, giving weights for 1,082,490 variants.
-
-  The weights of all chromosomes are then applied to our dosages. In the file
-  that PRS-CS writes, column 2 is the variant name, column 4 the effect allele
-  and column 6 the weight:
+  The weights of all chromosomes are then applied to our dosages. In the file that PRS-CS writes, column 2 is the variant name, column 4 the effect allele and column 6 the weight:
 
   ```bash
   cat "$OUT"/prscs_out/eur_pst_eff_*.txt > "$OUT/prscs_weights.txt"
-  plink2 --pfile "$OUT/imputed" --score "$OUT/prscs_weights.txt" 2 4 6
-  cols=+scoresums \
+  plink2 --pfile "$OUT/imputed" --score "$OUT/prscs_weights.txt" 2 4 6 \
          --threads $THREADS --out "$OUT/prscs_score"
   ```
 
   ### 3.6 Multi-ancestry methods: PRS-CSx
 
-  PRS-CSx uses GWAS results from more than one ancestry at once, which matters
-  for an admixed cohort like ours: a score built only on a European GWAS
+  PRS-CSx uses GWAS results from more than one ancestry at once, which matters for an admixed cohort like ours: a score built only on a European GWAS
   predicts less well in individuals with African or Native American ancestry. It
   needs one summary statistics file and one LD reference panel per ancestry,
   and all the panels in one directory together with the file
@@ -997,52 +995,102 @@ Let's look through the script to understand it better:
   little information on its own; the point of the method is that it still
   borrows strength across the two.
 
-  ### 3.7 Comparing the scores
-  Each method gives every individual a score, and several of them leave a choice
-  open: which p-value threshold for PRSice-2, and how to weigh the two ancestry
-  scores of PRS-CSx. If we make that choice and then measure performance in the
-  same people, the result is too optimistic, because we picked the winner using
-  their phenotypes. This is why PRSice's own summary file reports an R2 that we
-  do not use.
+  ### 3.7 Validation of the PRS 
 
-  We therefore use 5-fold cross-validation:
+ Each method gives every individual a score, and several of them leave a choice open: which p-value threshold for PRSice-2, and how to weigh the two ancestry scores of PRS-CSx. If we make that choice and
+  then measure performance in the same people, the result is too optimistic, because we picked the winner using their phenotypes. This is why PRSice's own summary file reports an R2 that we do not use.
 
-  1. Split the 870 individuals into 5 groups of about 174, with the same
-  case/control ratio in each.
-  2. Leave one group out. In the other four, find the setting that predicts
-  best.
-  3. Apply that setting to the group that was left out, and keep those scores.
-  4. Repeat until every group has been left out once.
-  5. Every individual now has a score from a model that never saw their
-  phenotype. Compute the R2 and AUC once, over all 870.
+Let's first assess how to check the performance of a PRS. As mentioned in the paper, we can fit two logistic regressions of case/control status, one on just the covariates we have (sex, age, first 10 PC's), and one with the covariates AND the PRS. This results in a Nagelkerke R2, which is a measure of how much of the case/control pattern can be explained by the model, and the difference between the two models is how much the PRS explains. For the same models, we can also compute AUC, which is the discrimination of the model, i.e. the chance that a randomly chosen case gets a higher predicted risk than a randomly chosen control (0.5 being a coin flip). 
 
-  With our numbers each left-out group holds about 96 cases and 78 controls.
-  Because the split is random, it is worth repeating the whole procedure with a
-  With our numbers each left-out group holds about 96 cases and 78 controls.
-  Because the split is random, it is worth repeating the whole procedure with a
-  few different seeds and averaging.
+We assess this using five-fold cross-validation, which is done as follows in our cohort: 
+1. Split the 870 individuals into 5 groups of about 174, with the same case/control ratio in each. Each group holds roughly 96 cases and 78 controls.
+  2. Set one group aside and use only the other four to choose the method's free setting. "Choose" means something concrete and different for each method:
+     - PRSice-2 has 11 scores, one per p-value threshold from 5e-08 to 1. We fit the pair of regressions above at each threshold, using only the four groups, and keep the threshold with the largest
+       difference in Nagelkerke R2 (i.e. the one where the PRS adds most) 
+     - PRS-CSx has one score per ancestry. We fit a logistic regression of case/control status on both at once in the four groups, which decides how much weight each ancestry deserves.
+     - LDpred2, PRS-CS and BridgePRS have nothing to choose, so this step does nothing for them.
+  3. Apply that setting to the group we set aside, and keep those scores. This is the point of the exercise: the setting was picked without ever seeing these individuals' phenotypes.
+  4. Repeat until every group has been set aside once.
+  5.Every individual now has a score from a model blind to their own phenotype. Pool all 870 of those held-out scores into one column, fit the covariates-only and covariates-plus-score regressions on all
+  870 at once, and report the difference in Nagelkerke R2 between those two models, plus the AUC of the second.
 
-  For each method we fit a logistic regression of case/control status on the
-  score plus the covariates (sex, age and the first 10 principal components),
-  and one with the covariates only. The difference in Nagelkerke R2 between the
-  two is the part explained by the score.
+Let's do this final step in R again: 
+```R
 
-  | Method | Variants used | R2 | AUC |
-  |---|---|---|---|
-  | PRSice-2 | 237,700 after clumping | | |
-  | LDpred2 | 1,190,225 | | |
-  | PRS-CS | 1,082,490 | | |
-  | PRS-CSx (EUR+AFR) | 1,082,490 | | |
+##Start with the data we generated: the phenotype file, covariates, and one column per PRS method score 
+ d <- merge(fread("phenotype_prsice.txt"), fread("covariates_prsice.txt"), by = "IID")
+  d[, y := ISCHEMIC_STROKE - 1]        # PLINK codes cases 2 and controls 1, while the glm() function later on expects 1 for cases and 0 for controls, so subtract 1. 
 
-  When comparing these numbers, keep in mind that the methods do not all use the
-  same variants: PRSice-2 works on all 5.8 million variants that survive its
-  ambiguity filter, while LDpred2, PRS-CS and PRS-CSx work on the 1.1 million
-  HapMap3 variants. Part of any difference between them is the variant set
-  rather than the method.
+  add_score <- function(d, name, file, col = "SCORE1_AVG") {
+    s <- fread(file, select = c("IID", col))
+    setnames(s, col, name)
+    merge(d, s, by = "IID")
+  }
+  d <- add_score(d, "ldpred2", "ldpred2_score.sscore")
+  d <- add_score(d, "prscs",   "prscs_score.sscore")
+  d <- add_score(d, "csx_EUR", "prscsx_EUR_score.sscore")
+  d <- add_score(d, "csx_AFR", "prscsx_AFR_score.sscore")
+  d <- add_score(d, "bridge",  "bridge_ens_score.sscore", "BETA3_AVG")
 
-  Finally, rather than splitting our cohort into ancestry groups and reporting
-  performance per group, which would leave us with groups of 17 individuals, we
-  test whether the score works equally well across the ancestry gradient: a
-  logistic regression with an interaction between the score and PC1. A
-  significant interaction means the score predicts better at one end of the
-  gradient than the other.
+  # PRSice puts all its thresholds in one file, and repeats the ID in an FID column
+  prsice     <- fread("prsice_eur.all_score", drop = "FID")
+  thresholds <- setdiff(names(prsice), "IID")
+  d <- merge(d, prsice, by = "IID")
+
+  ##Specify the two models, M0 is just the covariates, M1 is the covariates + the PRS. Note that "y" is the phenotype (case or control), and the reformulate() function builds a model formula out of a list of column names with the 1st argument at the righthand side and the second argument as the outcome. 
+  COVARIATES <- c("SEX", "AGE", paste0("PC", 1:10))
+  M0 <- reformulate(COVARIATES, "y")
+  M1 <- reformulate(c(COVARIATES, "score"), "y")
+
+  # the Nagelkerke R2 the score adds, and the AUC of the model that includes it
+  measure <- function(x) {
+    m0 <- glm(M0, x, family = binomial) #logistic regression for M0
+    m1 <- glm(M1, x, family = binomial) #logistic regression for M1 
+    r2 <- (1 - exp((deviance(m1) - deviance(m0)) / nrow(x))) /
+          (1 - exp(-deviance(m0) / nrow(x))) #deviance is a measure for how bad a model fits, the lower the better. Here we essentially check whether the deviance fell even further when adding the prs, per person (hence nrow(x)). 
+    rk <- rank(predict(m1, type = "response")) #this part is to compute the AUC, where we ask the model to predict the probability of someone being a case, so everyone gets a probability between 0 and 1 (we want the probability hence we use type = "response", otherwise the model defaults to log-odds). We then directly rank those probabilities so that we get a list from 1 (lowest probability) to 870 (highest probability), and this ranking also throws away the real probabilities since for AUC we are just interested in the ranking.
+
+    n1 <- sum(x$y == 1); n0 <- sum(x$y == 0) #This is just the nr of cases and nr of controls, respectively 
+    list(r2 = r2, auc = (sum(rk[x$y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)) #this looks like magic but is quite simple; we ask the model to define auc by summing the ranks of all the cases, and if the model is any good this total number should be high. The n1 * (n1 + 1) / 2 part checks how high this sum is when compared to the worst case scenario where the cases have the lowest ranks, so then we'd have 1 + 2 + 3 etc. Subtracting this from the actual sum of ranks measures how much better than this worst case scenario our real model is. Then finally the n1*n0 is just the number of case/control pairs we have. So the ratio is pairs where the case was ranked above the control ÷ all such pairs — exactly "the chance a randomly chosen case gets a higher predicted risk than a randomly chosen control".
+  }
+
+
+  # Now the cross-validation. Since the split into 5 groups is random, we repeat the splitting 500 times and average the result. Otherwise the result will be based on just one split and may vary if we again split the cohort.
+REPEATS=500
+run <- function(name, tune) {
+    r2 <- auc <- numeric(REPEATS) #We start by making two empty vectors for the r2 and auc
+    for (i in 1:REPEATS) {
+      fold <- integer(nrow(d)) #here we just make a vector of 870 zeros
+      for (v in 0:1) fold[d$y == v] <- sample(rep_len(1:5, sum(d$y == v))) #here we fill in the fold vector by assigning a number from 1 to 5 to each case and each control, until the vector is as long as the group in question (hence the sum(d$y == v)). The point of doing that separately for v = 0 and v = 1 is that controls are dealt out among the five groups and cases are dealt out among them independently, so every group ends up with the same case and control mix.
+      held <- numeric(nrow(d)) #again we make a vector of 870 zeros, ready to be filled in with auc/r2 scores.
+      for (k in 1:5) held[fold == k] <- tune(which(fold != k), which(fold == k)) #The loop over k then takes turns. k is whichever group is set aside this time, so which(fold == k) are the rows of that group and which(fold != k) are the rows of the other four. Those two go to tune, which is the function we hand to run and the only part that differs between methods: it uses the four groups to choose whatever the method has to choose, then returns scores for the group that was set aside. Those land in the slots of held belonging to that group.
+      d$score <- held #putting the pooled scores into the columns (auc and r2)
+      m <- measure(d); r2[i] <- m$r2; auc[i] <- m$auc #Fitting the two models on all 870 people at once, so that we can compare what results from our entire cohort when compared with the folds. 
+    }
+}
+
+
+#Now let's apply the above functions to the PRS methods! 
+set.seed(1)
+
+#LDPred2 and PRS-CS have nowhere where we need to make an arbitrary choice, so just check their performance without adjusting anything, just running the cross-validation. 
+  run("LDpred2", function(train, held_out) d$ldpred2[held_out])
+  run("PRS-CS",  function(train, held_out) d$prscs[held_out])
+
+#PRSice: try every threshold in the training rows, keep the one that adds most
+  run("PRSice-2", function(train, held_out) {
+    gain <- sapply(thresholds, function(t) {
+      x <- d[train]; x$score <- x[[t]]; measure(x)$r2
+    })
+    d[[ thresholds[which.max(gain)] ]][held_out]
+  })
+
+  # PRS-CSx: fit how much weight each ancestry score deserves, in the training rows
+  run("PRS-CSx", function(train, held_out) {
+    fit <- glm(y ~ csx_EUR + csx_AFR, d[train], family = binomial)
+    as.numeric(predict(fit, newdata = d[held_out]))
+  })
+
+  run("BridgePRS", function(train, held_out) d$bridge[held_out])
+
+
