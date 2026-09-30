@@ -53,3 +53,10 @@
   | PRS-CS 1000 Genomes LD blocks, European | 4.6 GB | 3.5, 3.6 |
   | PRS-CS 1000 Genomes LD blocks, African | 7.4 GB | 3.6 |
   | GWAS summary statistics, per ancestry | ~1 GB each | 3.1 onwards |
+
+  
+  And one script: `HRC-1000G-check-bim.pl` (version 4.3.3 here) from Will
+  Rayner's tools page. It is a single Perl file on a personal page whose download
+  URL changes between versions, so we do not bundle it. Perl is in the image, so
+  fetch the script and it runs.
+
