@@ -10,9 +10,6 @@
   # Build:  sudo apptainer build genotype-qc.sif container/pipeline.def
   # Test:   apptainer test genotype-qc.sif
   #
-  # If you cannot build it, pull the prebuilt image instead; see
-  # container/README.md. Many clusters disable the user namespaces a build
-  # needs, so building elsewhere and copying the .sif across is normal.
   #
   # The versions below must match SOFTWARE.md. Note that we do not provide
   # the strand-checking script from Will Rayner's lab since it is on a personal
