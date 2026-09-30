@@ -8,27 +8,27 @@
 
   ## Contents
 
-  ### Quality control
-  **1.1 Variant and sample missingness**
-  **1.2 Sex concordance**
-  **1.3 Preliminary PCA and heterozygosity**
-  **1.4 Kinship estimation**
-  **1.5 Strict variant filtering and differential missingness**
-  **1.6 Hardy-Weinberg**
-  **1.7 MAF**
-  **1.8 Variant harmonization**
-  **1.9 Principal component analysis**
+  ### Quality control  
+  **1.1 Variant and sample missingness**  
+  **1.2 Sex concordance**  
+  **1.3 Preliminary PCA and heterozygosity**  
+  **1.4 Kinship estimation**  
+  **1.5 Strict variant filtering and differential missingness**  
+  **1.6 Hardy-Weinberg**  
+  **1.7 MAF**  
+  **1.8 Variant harmonization**  
+  **1.9 Principal component analysis**  
 
-  ### Phasing and imputation
+  ### Phasing and imputation  
 
-  ### PRS calculation
-  **3.1 Preparing the summary statistics**
-  **3.2 Target file formats**
-  **3.3 PRSice-2**
-  **3.4 LDpred2**
-  **3.5 PRS-CS**
-  **3.6 PRS-CSx**
-  **3.7 Validation of the PRS**
+  ### PRS calculation  
+  **3.1 Preparing the summary statistics**  
+  **3.2 Target file formats**  
+  **3.3 PRSice-2**  
+  **3.4 LDpred2**  
+  **3.5 PRS-CS**  
+  **3.6 PRS-CSx**  
+  **3.7 Validation of the PRS**  
 
 
   ### Preparation
