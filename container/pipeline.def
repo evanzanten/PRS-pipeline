@@ -1,5 +1,5 @@
 
-  Bootstrap: docker
+Bootstrap: docker
   From: rocker/r-ver:4.3.2
 
   # ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@
   # ---------------------------------------------------------------------------
 
 
-  %labels
+%labels
       Description  Genotype QC, imputation and polygenic scoring
       R            4.3.2
       PLINK1       1.90b7.11
@@ -31,7 +31,7 @@
       PRSCSX       37eaeb3
 
 
-  %environment
+%environment
       export PATH=/opt/bin:$PATH
       export BEAGLE_JAR=/opt/share/beagle.jar
       export BREF_JAR=/opt/share/bref3.jar
@@ -40,7 +40,7 @@
       export PRSCSX_DIR=/opt/PRScsx
       export LC_ALL=C
 
-  %post
+%post
       set -eux
       export DEBIAN_FRONTEND=noninteractive
 
@@ -117,7 +117,7 @@
 
       rm -rf /tmp/*
 
-  %test
+%test
       set -e
       echo "every tool the pipeline calls, in the order the steps call them"
       plink2 --version
