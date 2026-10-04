@@ -213,7 +213,7 @@
 
   Remove the samples flagged PROBLEM. For us, this removed 50 samples, leaving 928. That is about 5%, which is more than you would like to see: 32 samples reported male came out female and 18 reported
   female came out male. A rate this symmetric points at labelling rather than at the DNA, so it is worth asking whoever prepared the plates before you accept it. We remove them either way, just to be
-  absolutely sure our data is clean for the next steps.
+  absolutely sure our data is clean for the next steps. For your cohort, it is worth finding out what the source of the mismatches are (could be difference between reported gender and chromosomal sex, or sex chromosome variations such as Turner or Klinefelter syndrome). 
 
   We first use awk to create a textfile with the samples that need to be removed. NR>1 is used to skip the first line (the header), then we filter for those rows where column 5 contains "PROBLEM"
   ($5=="PROBLEM") and print column 1 (FID) and column 2 (IID), separated by a tab ({print $1"\t"$2}).
@@ -283,15 +283,15 @@
   Related individuals break the assumption that every sample in your analysis is an independent observation, which both the PRS evaluation and any association testing rely on. This step also checks whether
   there are any duplicate samples in our data, which can also bias any future analysis we want to do. We estimate kinship with the KING algorithm, which is robust to the population structure that we just
   observed in our PCA. KING runs on the same pruned variant list. For each pair of individuals, we get a kinship coefficient, which is the probability that an allele drawn from both persons is inherited
-  from the same ancestor. As mentioned in the paper, we use the following thresholds:
+  from the same ancestor. As mentioned in the paper, we use the following thresholds, based on the paper by [Manichaikul et al](https://www.cog-genomics.org/static/pdf/Manichaikuletal2010.pdf):
 
   |Threshold|Relationship|
   |---|---|
-  |<0.04|Unrelated|
-  |0.04-0.09|Third-degree relatives (first cousins)|
-  |0.09-0.18|Second-degree (half-siblings, grandparent-grandchild)|
-  |0.18-0.35|First-degree (parent-child, full siblings, dizygotic twins)|
-  |>0.35|Duplicate samples or monozygotic twins|
+  |<0.0442|Unrelated|
+  |0.04442-0.0884|Third-degree relatives (first cousins)|
+  |0.0884-0.177|Second-degree (half-siblings, grandparent-grandchild)|
+  |0.177-0.354|First-degree (parent-child, full siblings, dizygotic twins)|
+  |>0.354|Duplicate samples or monozygotic twins|
 
   ```bash
   plink2 --bfile "$OUT/het_finished" --extract "$OUT/pruned_longrange_ld.prune.in" --make-king-table --threads $THREADS --out "$OUT/kinship"
@@ -300,11 +300,11 @@
 
   |Threshold|Count|
   |---|---|
-  |<0.04|       417149|
-  |0.04-0.09|37|
-  |0.09-0.18|14|
-  |0.18-0.35|33|
-  |>0.35|8|
+  |<0.0442|       417160|
+  |0.0442-0.0884|26|
+  |0.0884-0.177|14|
+  |0.177-0.354|33|
+  |>0.354|8|
 
   The 8 pairs above 0.35 are worth looking at individually rather than counting. Four of them are pairs that share a sample ID, so they are the same person genotyped twice. The other four are pairs with
   different sample IDs, and two of those are discordant for case/control status, meaning the same DNA appears in our data once as a case and once as a control. That is a labelling problem rather than a
@@ -316,7 +316,7 @@
 
   ```bash
   plink2 --bfile "$OUT/het_finished" --extract "$OUT/pruned_longrange_ld.prune.in" \
-         --king-cutoff 0.09 --threads $THREADS --out "$OUT/remove_related_individuals"
+         --king-cutoff 0.0884 --threads $THREADS --out "$OUT/remove_related_individuals"
 
   plink2 --bfile "$OUT/het_finished" --remove "$OUT/remove_related_individuals.out.id" \
          --threads $THREADS --make-bed --out "$OUT/unrelated_individuals"
@@ -363,8 +363,32 @@
   ### 1.6 Hardy-Weinberg equilibrium
   Hardy-Weinberg equilibrium is the genotype frequency you expect from the allele frequency if mating is random. A variant that departs from it sharply is usually a genotyping error, so we apply it as a
   filter in this pipeline. Our cohort is case/control, and it is better to just test HWE in controls since a real risk variant carried by a case is expected to depart from HWE. We therefore collect the
-  variants that depart from HWE in controls, and then remove those variants from the cases as well.
+  variants that depart from HWE in controls, and then remove those variants from the cases as well. Since HWE assumes one randomly mating population, and our cohort is admixed, the allele frequency differences between ancestries in our cohort make variants look like they are out of HWE, even when the genotyping is perfectly fine. This means we test each ancestry cluster for HWE separately based on the preliminary PCA clustering. 
 
+  Let's first extract the cluster labels, which was produced in the pca_het step, then filter for only the controls per cluster, and run the test per cluster: 
+
+  ```bash
+ for k in 1 2 3; do
+  awk -v k=$k 'NR>1 && $3==k {print $1"\t"$2}' "$OUT/clusters.txt" >
+  "$OUT/cluster${k}.txt"
+  plink2 --bfile "$OUT/diff_missingness_finished" --keep
+  "$OUT/cluster${k}.txt" \
+  --keep-if PHENO==1 --hwe 1e-6 --write-snplist --threads $THREADS \
+  --out "$OUT/hwe_cluster${k}"
+   done
+```
+
+Now we get a list of variants that should be included in our dataset, and they will have to pass in each cluster. For us, these are the numbers: 
+   |                           | Controls | Failing HWE at p < 1e-6 |
+   |---------------------------|----------|-------------------------|
+   | Cluster 1                 | 19       | 0                       |
+   | Cluster 2                 | 110      | 69                      |
+   | Cluster 3                 | 262      | 221                     |
+   | Cluster 2 & 3|372|60|
+  | Failing in all three      |          | 0                       |
+   | Everybody pooled together | 391      | 337                     |
+
+We see that when we compute HWE per cluster and check what variants are excluded by all clusters, there are none. If we run HWE across our entire dataset (without the clusters, the pooled one), 
   First, we use our .fam file generated by the last step to make a list of control individuals. Here, we use awk again to filter just for controls, which are noted as "1" in the 6th column (hence $6==1). We
   then print the FID and IID of those individuals (hence {print $1"\t"$2}), which is needed for PLINK to extract them.
 
