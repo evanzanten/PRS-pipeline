@@ -670,7 +670,7 @@ The container holds the tools but not the data (the reference panels are around 
   </table>
 
   Most of the individuals in our cohort cluster along the European-African axis and also overlap the admixed American individuals. That is reassuring, since we expected this pattern for Brazilian
-  individuals. The ancestry step of pca_clusters.R gives each of our individuals the name of the superpopulation whose cluster centre is closest to them. Keep in mind that this is a rough summary rather than an ancestry assignment, since an admixed individual sits between two clusters and still gets put in one of them. For us, these are the results:
+  individuals. Keep in mind that this is a rough summary rather than an ancestry assignment, since an admixed individual sits between two clusters and still gets put in one of them. For us, these are the results:
 
   |Ancestry|N|
   |---|---|
