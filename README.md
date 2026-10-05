@@ -656,7 +656,7 @@ We see that when we compute HWE per cluster and check what variants are excluded
   |Ancestry|N|
   |---|---|
   |African|17|
-  |African-American|201|
+  |Admixed American|201|
   |European|651|
   |South-Asian|1|
   |East-Asian|0|
