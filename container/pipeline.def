@@ -76,7 +76,6 @@ From: rocker/r-ver:4.3.2
         # --test-missing in step 1.5, and --flip plus --freq --keep-allele-order in
         # step 1.8.
         curl -fsSL -o /tmp/plink1.zip \
-
         https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20250819.zip
         unzip -q /tmp/plink1.zip -d /tmp/plink1
         install -m 0755 /tmp/plink1/plink /usr/local/bin/plink
@@ -94,7 +93,6 @@ From: rocker/r-ver:4.3.2
 
         # --- Beagle, and the converter for its haplotype format-----------------
         curl -fsSL -o /usr/local/share/beagle.jar \
-
         https://faculty.washington.edu/browning/beagle/beagle.27Feb25.75f.jar
         curl -fsSL -o /usr/local/share/bref3.jar \
         https://faculty.washington.edu/browning/beagle/bref3.28Jun21.220.jar
