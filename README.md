@@ -1324,7 +1324,7 @@ The container holds the tools but not the data (the reference panels are around 
   suggestive at best. PRS-CSx is beaten by 40% of the noise scores and its AUC is exactly the noise average, so we have no evidence that it predicts anything at all. That is what you would expect though,
   since the second arm is much smaller (3,423 versus 236,506 effective individuals) and neither arm matches the ancestry of our cohort.
 
-  Both tables together look like this:
+  Both figures together look like this:
 
   <table>
     <tr>
