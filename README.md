@@ -4,7 +4,7 @@
 
 
   **This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by
-  QC and PRS computation. Note that for generating the figures, we have a separate R script in this repository called figures.R.**
+  QC and PRS computation. The pipeline needs two short R scripts, pca_clusters.R and match_sumstats.R, both of which are in this repository.**
 
   ## Contents
 
@@ -191,6 +191,12 @@
 
   In our data, the first command excludes 1,248 variants and the second excludes 8 samples, so we are left with 978 samples and 863,477 variants.
 
+  These are conventional thresholds rather than rules, so it is worth looking at the distributions instead of taking them on trust. --missing writes two tables: one missingness rate per variant (.vmiss) and one per sample (.smiss). What you are looking for is a distinct group of samples sitting just inside the cutoff, since that usually means a technical problem such as a failed plate rather than a few individually poor samples, and in that case a stricter threshold is warranted.
+
+  ```bash
+  plink2 --bfile "$OUT/first_step" --missing --threads "$THREADS" --out "$OUT/missingness"
+  ```
+
 
   ### 1.2 Sex concordance
   We now check that the sex recorded in the phenotype file matches the sex we can read off the genotypes. A mismatch usually means a sample was swapped somewhere between the clinic and the plate, and a
@@ -261,8 +267,11 @@
 
   plink2 --bfile "$OUT/sex_check_finished" --extract "$OUT/pruned_longrange_ld.prune.in" --het --threads $THREADS --out "$OUT/full_cohort_het"
 
-  # figures.R does the clustering, draws the PCA and the heterozygosity plots, and writes the list of outliers to het_outliers.txt.
+  # pca_clusters.R clusters the cohort on PC1 and PC2, then flags the individuals whose
+  # heterozygosity is more than 3 SD from the mean of their own cluster. It writes two files:
+  # het_outliers.txt, which the next command removes, and clusters.txt, which step 1.6 reads.
   # For us it found clusters of 626, 243 and 59 individuals, and flagged 14 outliers.
+  Rscript pca_clusters.R clusters
 
   plink2 --bfile "$OUT/sex_check_finished" --remove "$OUT/het_outliers.txt" --threads $THREADS --make-bed --out "$OUT/het_finished"
   ```
@@ -288,7 +297,7 @@
   |Threshold|Relationship|
   |---|---|
   |<0.0442|Unrelated|
-  |0.04442-0.0884|Third-degree relatives (first cousins)|
+  |0.0442-0.0884|Third-degree relatives (first cousins)|
   |0.0884-0.177|Second-degree (half-siblings, grandparent-grandchild)|
   |0.177-0.354|First-degree (parent-child, full siblings, dizygotic twins)|
   |>0.354|Duplicate samples or monozygotic twins|
@@ -354,7 +363,7 @@
   Now we can use PLINK2 again to exclude these variants. For us, this only excluded 3 variants, leaving 854,448.
 
   One note on our own numbers: we added this test after the run that produced everything below, so the variant counts from 1.6 onwards are from a chain in which those 3 variants were still present. Removing
-  3 of 854,000 changes nothing that matters, but it is why 1.6 reports 854,042 rather than 854,039.
+  3 of 854,000 changes nothing that matters, but it is why 1.6 starts from 854,451 rather than 854,448.
   ```bash
   plink2 --bfile "$OUT/strict_variant_filter" --exclude "$OUT/diff_missingness_remove.txt" \
          --threads $THREADS --make-bed --out "$OUT/diff_missingness_finished"
@@ -363,47 +372,56 @@
   ### 1.6 Hardy-Weinberg equilibrium
   Hardy-Weinberg equilibrium is the genotype frequency you expect from the allele frequency if mating is random. A variant that departs from it sharply is usually a genotyping error, so we apply it as a
   filter in this pipeline. Our cohort is case/control, and it is better to just test HWE in controls since a real risk variant carried by a case is expected to depart from HWE. We therefore collect the
-  variants that depart from HWE in controls, and then remove those variants from the cases as well. Since HWE assumes one randomly mating population, and our cohort is admixed, the allele frequency differences between ancestries in our cohort make variants look like they are out of HWE, even when the genotyping is perfectly fine. This means we test each ancestry cluster for HWE separately based on the preliminary PCA clustering. 
+  variants that depart from HWE in controls, and then remove those variants from the cases as well.
 
-  Let's first extract the cluster labels, which was produced in the pca_het step, then filter for only the controls per cluster, and run the test per cluster: 
+  There is a second complication. HWE assumes one randomly mating population, and our cohort is admixed, so the allele frequency differences between ancestries make variants look like they are out of HWE
+  even when the genotyping is perfectly fine. We therefore test each ancestry cluster separately, using the clusters that pca_clusters.R wrote in step 1.3, and keep only the variants that pass in every
+  cluster.
 
-  ```bash
- for k in 1 2 3; do
-  awk -v k=$k 'NR>1 && $3==k {print $1"\t"$2}' "$OUT/clusters.txt" >
-  "$OUT/cluster${k}.txt"
-  plink2 --bfile "$OUT/diff_missingness_finished" --keep
-  "$OUT/cluster${k}.txt" \
-  --keep-if PHENO==1 --hwe 1e-6 --write-snplist --threads $THREADS \
-  --out "$OUT/hwe_cluster${k}"
-   done
-```
-
-Now we get a list of variants that should be included in our dataset, and they will have to pass in each cluster. For us, these are the numbers: 
-   |                           | Controls | Failing HWE at p < 1e-6 |
-   |---------------------------|----------|-------------------------|
-   | Cluster 1                 | 19       | 0                       |
-   | Cluster 2                 | 110      | 69                      |
-   | Cluster 3                 | 262      | 221                     |
-   | Cluster 2 & 3|372|60|
-  | Failing in all three      |          | 0                       |
-   | Everybody pooled together | 391      | 337                     |
-
-We see that when we compute HWE per cluster and check what variants are excluded by all clusters, there are none. If we run HWE across our entire dataset (without the clusters, the pooled one), 
-  First, we use our .fam file generated by the last step to make a list of control individuals. Here, we use awk again to filter just for controls, which are noted as "1" in the 6th column (hence $6==1). We
-  then print the FID and IID of those individuals (hence {print $1"\t"$2}), which is needed for PLINK to extract them.
+  First we make a list of the controls. In a .fam file the sixth column holds the phenotype, where 1 is a control and 2 a case, so we keep the rows where that column is 1 and print the FID and IID that
+  PLINK needs.
 
   ```bash
   awk '$6==1 {print $1"\t"$2}' "$OUT/diff_missingness_finished.fam" > "$OUT/control_samples.txt"
   ```
-  Now we can extract those control individuals and apply the HWE filter on these people. We want to keep the variants that do not deviate from HWE, therefore we use --write-snplist.
+
+  Next we split those controls by cluster and run the test inside each one. The awk command reads two files in turn. From the first, the control list, it remembers every IID. From the second, clusters.txt,
+  it keeps the rows whose cluster number (the third column) is the cluster we are on and whose IID it saw in the control list. FNR>1 skips the header line of clusters.txt.
+
   ```bash
-  plink2 --bfile "$OUT/diff_missingness_finished" --keep "$OUT/control_samples.txt" \
-         --hwe 1e-6 --write-snplist --threads $THREADS --out "$OUT/hwe_passed"
+  for k in 1 2 3; do
+    awk -v k=$k 'NR==FNR {ctl[$2]=1; next} FNR>1 && $3==k && ctl[$2] {print $1"\t"$2}' \
+        "$OUT/control_samples.txt" "$OUT/clusters.txt" > "$OUT/controls_cluster${k}.txt"
+
+    plink2 --bfile "$OUT/diff_missingness_finished" --keep "$OUT/controls_cluster${k}.txt" \
+           --hwe 1e-6 --write-snplist --threads $THREADS --out "$OUT/hwe_cluster${k}"
+  done
+  ```
+
+  Each run writes out the variants that passed in that cluster. A variant has to pass in all three, so we pool the three lists, count how often each variant appears, and keep the ones that appear three
+  times.
+
+  ```bash
+  sort "$OUT"/hwe_cluster[123].snplist | uniq -c | awk '$1==3 {print $2}' > "$OUT/hwe_passed.snplist"
 
   plink2 --bfile "$OUT/diff_missingness_finished" --extract "$OUT/hwe_passed.snplist" \
          --threads $THREADS --make-bed --out "$OUT/hwe_completed"
   ```
-  For us this removed 409 variants, leaving 854,042.
+
+  For us this removed 296 of the 854,451 variants, leaving 854,155. The numbers per cluster show why it is worth doing this way:
+
+  |                                            | Controls | Failing HWE at p < 1e-6 |
+  |--------------------------------------------|----------|-------------------------|
+  | Cluster 1                                  | 19       | 53                      |
+  | Cluster 2                                  | 110      | 129                     |
+  | Cluster 3                                  | 262      | 287                     |
+  | Everybody pooled together                  | 391      | 409                     |
+  | Failing in at least one cluster (what we remove) |    | 296                     |
+  | Failing in all three clusters               |         | 53                      |
+
+  Pooling the whole cohort flags 409 variants, but 116 of those fail in no single cluster. Those 116 only look out of HWE because three groups with different allele frequencies were added together, which
+  is exactly the artefact described above, and testing per cluster keeps them in the data. The per-cluster test also catches 3 variants that the pooled test missed. Note that cluster 1 has only 19
+  controls, so the test has little power there, and its 53 failures are a subset of the failures in both of the other clusters.
 
   ### 1.7 Minor allele frequency
   We now filter out variants with a MAF below 1%, since at our sample size, a rare variant is carried by too few people to reliably estimate an effect for, and genotype errors also tend to concentrate at
@@ -638,7 +656,7 @@ We see that when we compute HWE per cluster and check what variants are excluded
   Then we plot PC1 against PC2, with the reference individuals coloured by superpopulation and our own individuals in grey.
 
   ```bash
-  Rscript figures.R pca_reference
+  Rscript pca_clusters.R ancestry
   ```
 
   <table>
@@ -646,12 +664,12 @@ We see that when we compute HWE per cluster and check what variants are excluded
       <td><img src="figures/pca_reference.png" alt="PC1 and PC2 of our cohort together with 1000 Genomes" width="500"></td>
     </tr>
     <tr>
-      <td align="center"><em>PC1 and PC2. Blue: African, red: Admixed-American, green: East-Asian, yellow: European, purple: South-Asian, dark grey: our cohort</em></td>
+      <td align="center"><em>PC1 and PC2 of 870 cohort individuals (dark grey triangles) and 2,504 1000 Genomes reference individuals (coloured dots), over 104,471 LD-pruned autosomal variants shared between the datasets. Blue: African, red: Admixed American, green: East Asian, yellow: European, purple: South Asian</em></td>
     </tr>
   </table>
 
   Most of the individuals in our cohort cluster along the European-African axis and also overlap the admixed American individuals. That is reassuring, since we expected this pattern for Brazilian
-  individuals. We used an R code (see figures.R, the pca_reference step) to determine, for each individual, what ancestry they are closest to. For us, these are the results:
+  individuals. The ancestry step of pca_clusters.R gives each of our individuals the name of the superpopulation whose cluster centre is closest to them. This is a rough summary rather than an ancestry assignment, since an admixed individual sits between two clusters and still gets put in one of them. For us: For us, these are the results:
 
   |Ancestry|N|
   |---|---|
