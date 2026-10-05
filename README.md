@@ -565,7 +565,7 @@ The container holds the tools but not the data (the reference panels are around 
   cohort. Since our cohort is Brazilian (admixed), many individuals in our cohort will likely not cluster with one specific ancestry, but fall in between the clusters.
 
   This is another more lengthy and complex step, in which we need two more 1000 Genomes files that we are going to add to our configuration. KG_DIR holds the 1000 Genomes Phase 3 reference VCF files, one
-  per chromosome. KG_PANEL is the panel file from the same folder, which lists the populations and superpopulations of each 1000 Genomes individual; we use this for making the figure in R, so we export it.
+  per chromosome. KG_PANEL is the panel file from the same folder, which lists the populations and superpopulations of each 1000 Genomes individual; the ancestry step of pca_clusters.R reads it, so we export it.
 
   ```bash
   KG_DIR=/path_to_1000genomes
@@ -652,7 +652,9 @@ The container holds the tools but not the data (the reference panels are around 
          --out "$OUT/pca_with_reference"
   ```
 
-  Then we plot PC1 against PC2, with the reference individuals coloured by superpopulation and our own individuals in grey.
+  The ancestry step below gives each of our individuals the superpopulation whose cluster centre is closest to them, so that
+  we can put a number on where our cohort sits relative to the reference. It is worth plotting PC1 against PC2 here as well, with the reference individuals coloured by superpopulation and your own in grey, which for our data looks like the figure below.
+
 
   ```bash
   Rscript pca_clusters.R ancestry
@@ -668,7 +670,7 @@ The container holds the tools but not the data (the reference panels are around 
   </table>
 
   Most of the individuals in our cohort cluster along the European-African axis and also overlap the admixed American individuals. That is reassuring, since we expected this pattern for Brazilian
-  individuals. The ancestry step of pca_clusters.R gives each of our individuals the name of the superpopulation whose cluster centre is closest to them. This is a rough summary rather than an ancestry assignment, since an admixed individual sits between two clusters and still gets put in one of them. For us: For us, these are the results:
+  individuals. The ancestry step of pca_clusters.R gives each of our individuals the name of the superpopulation whose cluster centre is closest to them. Keep in mind that this is a rough summary rather than an ancestry assignment, since an admixed individual sits between two clusters and still gets put in one of them. For us, these are the results:
 
   |Ancestry|N|
   |---|---|
@@ -1315,7 +1317,7 @@ The container holds the tools but not the data (the reference panels are around 
   | | R2 | AUC |
   |---|---|---|
   | noise, mean | 0.0015 | 0.570 |
-  | noise, median | 0.0007 | - (not computed given symmetric distribution)  |
+  | noise, median | 0.0007 | - (not recorded)  |
   | noise, 90th percentile | 0.0041 | 0.575 |
 
   Compared to that, LDpred2 and PRS-CS are above 99.6% of the noise scores, so those are real. PRSice-2 sits exactly on the 90th percentile, meaning one noise score in ten does just as well, so it is
