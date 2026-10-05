@@ -43,8 +43,7 @@
   The key versions, all in the image: PLINK 1.90b7.11 (2023-12-11), PLINK 2.00a3.7 (2022-10-24), bcftools/HTSlib 1.18, Beagle 5.5 (27Feb25.75f), PRSice-2 2.3.5, and R 4.3.2 with data.table 1.14.10,
   ggplot2 3.4.4 and scales 1.3.0 from a dated CRAN snapshot. The coding itself is done in bash, and we make the figures in R.
 
-     The container holds the tools but not the data: the reference panels are around 20 GB each, they are public, and they change on their own schedule. To choose the right reference panel, we refer to our
-  paper section 4.1.
+The container holds the tools but not the data (the reference panels are around 20 GB each, they are public, and they change on their own schedule). To choose the right reference panel, we refer to our paper section 4.1.
 
   2. **Input data**
      This pipeline is built for SNP array data, although some of the steps are also relevant for whole exome sequencing (WES) and whole genome sequencing (WGS). For full WES and WGS pipelines, we recommend
