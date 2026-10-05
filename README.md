@@ -42,7 +42,9 @@
      ```
   The key versions, all in the image: PLINK 1.90b7.11 (2023-12-11), PLINK 2.00a3.7 (2022-10-24), bcftools/HTSlib 1.18, Beagle 5.5 (27Feb25.75f), PRSice-2 2.3.5, and R 4.3.2 with data.table 1.14.10,
   ggplot2 3.4.4 and scales 1.3.0 from a dated CRAN snapshot. The coding itself is done in bash, and we make the figures in R.
-The container holds the tools but not the data (the reference panels are around 20 GB each, they are public, and they change on their own schedule). To choose the right reference panel, we refer to our paper section 4.1.
+
+     The container holds the tools but not the data: the reference panels are around 20 GB each, they are public, and they change on their own schedule. To choose the right reference panel, we refer to our
+  paper section 4.1.
 
   2. **Input data**
      This pipeline is built for SNP array data, although some of the steps are also relevant for whole exome sequencing (WES) and whole genome sequencing (WGS). For full WES and WGS pipelines, we recommend
@@ -1320,6 +1322,18 @@ The container holds the tools but not the data (the reference panels are around 
   Compared to that, LDpred2 and PRS-CS are above 99.6% of the noise scores, so those are real. PRSice-2 sits exactly on the 90th percentile, meaning one noise score in ten does just as well, so it is
   suggestive at best. PRS-CSx is beaten by 40% of the noise scores and its AUC is exactly the noise average, so we have no evidence that it predicts anything at all. That is what you would expect though,
   since the second arm is much smaller (3,423 versus 236,506 effective individuals) and neither arm matches the ancestry of our cohort.
+
+  Both tables together look like this:
+
+  <table>
+    <tr>
+      <td><img src="figures/prs_comparison.png" alt="Incremental R2 and AUC per PRS method, with the noise floor marked" width="700"></td>
+    </tr>
+    <tr>
+      <td align="center"><em>Incremental Nagelkerke R&sup2; (A) and AUC (B) per method. The shaded band in A and the dashed line in B are the 90th percentile of the noise scores, and the solid line in B is the covariates-only model. A method that does not clear the shaded band or the dashed line has not been shown to beat a random score. Error bars in A are 1 standard deviation over the 500 repeats, which is why only the two tuned methods have them.</em></td>
+    </tr>
+  </table>
+
 
   That check just costs you a couple of minutes and is a nice sanity check that we recommend. So run your pipeline once on a column of randomly generated PRS, and if your real PRS does not beat these random PRS by a wide margin, then your PRS brings nothing to the table. This check is suitable in case you used methods where you didn't have to make any choice on the parameters (PRS-CS and LDpred2), since their score is fixed. In case you used PRSice-2 and PRS-CSx you would, strictly speaking, need to shuffle the case/control labels and go through the cross-validation again, which we did not do here. 
 
