@@ -8,6 +8,7 @@
   |------|---------|-------------------|----------|
   | PLINK | 1.90b7.11 (2023-12-11) | The three things PLINK 2 does not do: `--check-sex`, `--test-missing`, and `--flip` with `--freq --keep-allele-order` | 1.2, 1.5, 1.8 |
   | PLINK 2 | 2.00a3.7 (2022-10-24) | Everything else: filtering, frequencies, Hardy-Weinberg, kinship, PCA, format conversion, scoring | 1.1-3.8 |
+  | PLINK 2|v2.0.0-b.1 (2026-10-01)| Not used in this pipeline, but can be downloaded as the newest release|
   | bcftools / HTSlib | 1.18 | Reading and filtering VCF files, and indexing them | inspection, 2.x |
   | Beagle | 5.5 (27Feb25.75f) | Phasing and imputation in one step | 2.x |
   | bref3 | 28Jun21.220 | Converts a reference panel to Beagle's compressed haplotype format | 2.x |
