@@ -112,14 +112,14 @@ From: rocker/r-ver:4.3.2
       git -C /opt/PRScsx  checkout -q 37eaeb3
 
       # --- R packages ---------------------------------------------------------
-      # From a dated snapshot so a rebuild installs these versions rather than
+      # From a dated snapshot so a rebuild installs these versions, not
       # whatever is current.
-      R -e 'options(repos = c(CRAN = "https://packagemanager.posit.co/cran/2024-01-15")); \
-            install.packages(c("data.table", "ggplot2", "scales", \
-                               "dplyr", "R.utils", "runonce", \
+      R -e 'options(repos = c(CRAN =
+      "https://packagemanager.posit.co/cran/2024-01-15"))
+            install.packages(c("data.table", "ggplot2", "scales",
+                               "dplyr", "R.utils", "runonce",
                                "bigstatsr", "bigsnpr"), Ncpus = 4)'
 
-      rm -rf /tmp/*
 
 %test
       set -e
@@ -134,7 +134,8 @@ From: rocker/r-ver:4.3.2
       python3 -c "import numpy, scipy, h5py; print('python deps OK')"
       python3 /opt/PRScs/PRScs.py --help > /dev/null 2>&1 || true
       test -f /opt/PRScsx/PRScsx.py && echo "PRS-CSx present"
-      Rscript -e 'for (p in c("data.table","ggplot2","scales","dplyr", \
-                              "R.utils","bigsnpr","bigstatsr")) \
-                    stopifnot(requireNamespace(p, quietly = TRUE)); \
+      Rscript -e 'for (p in c("data.table","ggplot2","scales","dplyr",
+                              "R.utils","bigsnpr","bigstatsr"))
+                    stopifnot(requireNamespace(p, quietly = TRUE))
                   cat("R packages OK\n")'
+
