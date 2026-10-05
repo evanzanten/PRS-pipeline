@@ -1,27 +1,34 @@
  # Software
 
-  Every tool the pipeline calls, at the version it was run with. These are the
-  same versions the container installs: `container/pipeline.def` is the
-  machine-readable form of this table, and the two must be changed together.
+  Every tool the pipeline calls, at the version it was run with.
+  `container/pipeline.def` is the machine-readable form of this table, and the
+  two must be changed together.
+
+  The container installs these same versions with one exception, PLINK 2, which
+  is noted in the table: the build the results were produced with is no longer
+  distributed, so the image pins a current one. This is why the archived image
+  rather than a rebuild is the reproducible artifact.
 
   | Tool | Version | What it does here | Sections |
   |------|---------|-------------------|----------|
-  | PLINK | 1.90b7.11 (2023-12-11) | The three things PLINK 2 does not do: `--check-sex`, `--test-missing`, and `--flip` with `--freq --keep-allele-order` | 1.2, 1.5, 1.8 |
-  | PLINK 2 | 2.00a3.7 (2022-10-24) | Everything else: filtering, frequencies, Hardy-Weinberg, kinship, PCA, format conversion, scoring | 1.1-3.8 |
-  | PLINK 2|v2.0.0-b.1 (2026-10-01)| Not used in this pipeline, but can be downloaded as the newest release|
+  | PLINK | 1.9.0-b.7.11 (2025-08-19) | The three things PLINK 2 does not do: `--check-sex`, `--test-missing`, and `--flip` with `--freq --keep-allele-order` | 1.2, 1.5, 1.8 |
+  | PLINK 2 | 2.00a3.7 (2022-10-24) | Everything else: filtering, frequencies, Hardy-Weinberg, kinship, PCA, format conversion, scoring. This is the build every number in the README came from | 1.1-3.8 |
+  | PLINK 2 | v2.0.0-b.1 (2026-10-01) | What the container installs. PLINK 2 removes old dated builds from its download server, so 2.00a3.7 can no longer be fetched and the image pins the current build instead | 1.1-3.8 |
   | bcftools / HTSlib | 1.18 | Reading and filtering VCF files, and indexing them | inspection, 2.x |
   | Beagle | 5.5 (27Feb25.75f) | Phasing and imputation in one step | 2.x |
   | bref3 | 28Jun21.220 | Converts a reference panel to Beagle's compressed haplotype format | 2.x |
   | UCSC liftOver | undated binary | Only if your data is on GRCh38 and you want GRCh37 | 1.8 |
   | Perl | 5.x, from the base image | Runs Rayner's strand-checking script, which you fetch yourself | 1.8 |
   | PRSice-2 | 2.3.5 (2021-09-20) | Clumping and thresholding, and a score per p-value threshold | 3.3 |
+  | PRS-CS | commit 5330390 | Continuous-shrinkage weights from one GWAS | 3.5 |
+  | PRS-CSx | commit 37eaeb3 | Continuous-shrinkage weights from several GWAS jointly | 3.6 |
   | R: bigsnpr | from the 2024-01-15 snapshot | LDpred2-auto | 3.4 |
   | R: bigstatsr | from the same snapshot | The on-disk matrix code bigsnpr is built on | 3.4 |
   | Python: numpy, scipy, h5py | from the base image | Required by PRS-CS and PRS-CSx | 3.5, 3.6 |
-  | R | 4.3.2 | The summary-statistics join, LDpred2, the validation, and every figure | throughout |
+  | R | 4.3.2 | The summary-statistics join, the ancestry clustering, LDpred2 and the validation | throughout |
   | R: data.table | 1.14.10 | Reading and joining large variant tables | throughout |
-  | R: ggplot2 | 3.4.4 | Figures | figures.R |
-  | R: scales | 1.3.0 | Axis formatting | figures.R |
+  | R: ggplot2 | 3.4.4 | Drawing the figures in the paper. No script in this repository needs it: `pca_clusters.R` and `match_sumstats.R` use base R and data.table only | - |
+  | R: scales | 1.3.0 | Axis formatting, same as above | - |
 
   R packages are installed from a dated CRAN snapshot (2024-01-15) so that a
   rebuild gets these versions rather than whatever is current. HTSlib and
