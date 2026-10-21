@@ -51,14 +51,25 @@ The container holds the tools but not the data (the reference panels are around 
   20:2372-2382 (2025), which covers sample and variant filtering and compares the commonly used tools. In our case, we use SNP array data in a variant call format (VCF) file. Our data is derived from a
   stroke GWAS in 986 Brazilian individuals (513 cases, 473 controls).
 
-  3. **Configuration**
-     In many scripts, values are often set multiple times throughout the script, and it is often easier and cleaner to assign these values at the beginning of the script so that if you change the values,
-  you only have to do that once at the beginning of the script. Throughout this pipeline, we assign multiple variables to values:
-     *  For reproducibility, we assign a seed. This means that in steps where randomization is applied, we will get the same results every time we run the script.
-     *  When working on computing clusters, it is advisable to set the number of CPU cores that PLINK may use, since if you do not do this, PLINK will attempt to use all available cores on a node, which may
-  exceed your allocated resources. As a default, we will use 4 threads.
-     *  We also specify the output path that will be used to put all the results in, and the input VCF and metadata (for us, the phenotype textfile that states whether each individual is a case or a
-  control, and what their age and sex is)
+  3. **Reference data**
+     The reference data is not in the above container since it changes versions often. You can fetch what you need from this table:
+     | What | Used in | Where |
+|---|---|---|
+| 1000 Genomes Phase 3 VCFs (GRCh37) and the panel file | 1.9 | [1000 Genomes FTP](https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/) |
+| `1000GP_Phase3_combined.legend.gz` | 1.8 | [Rayner tools](https://www.chg.ox.ac.uk/~wrayner/tools/) |
+| `HRC-1000G-check-bim.pl` | 1.8 | same place |
+| `human_g1k_v37.fasta.gz` | 1.8 | [1000 Genomes technical](https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/) |
+| Beagle `.jar`, bref3 panel, genetic maps | 2 | [Beagle](https://faculty.washington.edu/browning/beagle/), [bref3](https://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes_phase3_v5a/b37.bref3/), [maps](https://bochet.gcc.biostat.washington.edu/beagle/genetic_maps/) |
+| LDpred2 HapMap3+ LD reference (14 GB) | 3.4 | [figshare](https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061) |
+| PRS-CS / PRS-CSx LD panels | 3.5, 3.6 | [PRS-CS](https://github.com/getian107/PRScs), [PRS-CSx](https://github.com/getian107/PRScsx) |
+| BridgePRS | 3.7 | [BridgePRS](https://github.com/clivehoggart/BridgePRS) |
+| Your GWAS summary statistics | 3.1 | [GWAS Catalog](https://www.ebi.ac.uk/gwas/home) |
+
+  4. **Scripts in this repository**
+     This pipeline runs all QC steps and PRS calculation and validation in bash, and we have also several separate R scripts to (1) do a rough ancestry clustering, determine outliers based on heterozygosity per ancestry cluster, and do a more fine-grained ancestry assignment (pca_clusters.R), (2) if needed (if your GWAS does not contain rsIDs), add rsIDs to a GWAS summary statistics file (match_sumstats.R), and (3) create figures to gain insights into your data distributions (see figures below, figures.R).
+     
+  5. **Configuration**
+  Set these once, every command below uses these variables. 
 
   ```bash
   SEED=1
@@ -67,7 +78,7 @@ The container holds the tools but not the data (the reference panels are around 
   VCF=/path_to_vcf/genotypes.vcf.gz
   PHENO=/path_to_metadata/phenotypes.txt
   ```
-
+  The phenotype file needs one row per sample with an FID, IID, case/control status, sex and age. 
 
   ### Inspecting your data
 
@@ -185,6 +196,9 @@ The container holds the tools but not the data (the reference panels are around 
   plink2 --bfile "$OUT/first_step" --geno 0.2 --threads "$THREADS" --make-bed --out "$OUT/lenient_var"
 
   plink2 --bfile "$OUT/lenient_var" --mind 0.02 --threads "$THREADS" --make-bed --out "$OUT/sample_missingn"
+
+  plink2 --bfile "$OUT/first_step" --missing --threads "$THREADS" --out "$OUT/missingness"
+  Rscript figures.R missingness
   ```
   Note the --make-bed in both commands: without it PLINK only writes a log and the next step has no file to read.
 
@@ -201,7 +215,7 @@ The container holds the tools but not the data (the reference panels are around 
   We now check that the sex recorded in the phenotype file matches the sex we can read off the genotypes. A mismatch usually means a sample was swapped somewhere between the clinic and the plate, and a
   swapped sample carries the wrong phenotype, so it has to go. The check works on the X chromosome. Males have one copy and so cannot be heterozygous on it; females have two and are heterozygous at many
   positions.
-  PLINK summarises this as an inbreeding coefficient F, which lands near 1 for males and near 0 for females. Below we call F < 0.2 female and F > 0.8 male, and treat anything in between as ambiguous.
+  PLINK summarises this as an inbreeding coefficient F, which should be near 1 for males and near 0 for females. Below we call F < 0.2 female and F > 0.8 male and treat anything in between as ambiguous.
   Note that this step can only be done in PLINK 1.9 (not PLINK 2, where --check-sex does not exist).
   ```bash
   plink --bfile "$OUT/sample_missingn" --check-sex 0.2 0.8 --out "$OUT/sexcheck"
@@ -228,19 +242,10 @@ The container holds the tools but not the data (the reference panels are around 
 
   plink2 --bfile "$OUT/sample_missingn" --remove "$OUT/to_be_removed_sex.txt" --threads $THREADS --make-bed --out "$OUT/sex_check_finished"
   ```
-  Since in our data, we removed 50 samples, we end up with 928 individuals.
+  In our data, 50 samples were flagged as "PROBLEM", this is 5% of our entire sample size, which is quite high. 32 samples reported male came out as female, and 18 samples the other way around. This relatively symmetric split points at labelling errors, so if you notice something similar in your data, assess how the plates were prepared. We will remove those samples, which means we are left with 928 samples in total. 
 
-  ### 1.3 Preliminary PCA and heterozygosity
-  Heterozygosity is the fraction of a person's genotypes that carry two different alleles. Too high suggests the sample is a mixture of two DNAs, and too low suggests inbreeding or a degraded sample. Either
-  way it is a sign of a sample we should not trust. However, the 'normal' amount of heterozygosity differs enormously between ancestry groups, so in an admixed cohort like ours, comparing everybody to the
-  mean heterozygosity rates of the entire cohort would flag whole ancestry groups instead of just bad samples. This is why, for cross-ancestry or admixed cohorts, it is advisable to perform a PCA to split
-  the cohort into broad ancestry clusters, then within each cluster we remove individuals more than 3 standard deviations away from that cluster's mean heterozygosity. For relatively homogeneous cohorts
-  such as European cohorts, you can skip the PCA step and directly compute the heterozygosity rates for the entire cohort.
-
-  We perform a PCA to do a rough separation of our cohort into clusters (see the paper to get a full description of how this step works). PCA needs variants that are roughly independent of one another, so
-  we first prune for linkage disequilibrium. We also drop the long-range LD regions of Price et al. (2008), a short list of places in the genome where correlations stretch so far that they dominate the top
-  components and swamp the ancestry signal we are after. Those coordinates are on build GRCh37, so check the build of your own data before using them. See the file high_ld_b37.txt to get a list of these
-  regions.
+  ### 1.3 Preliminary PCA and heterozygosity  
+  Excess heterozygosity indicates that the DNA from two people were mixed in one tube. How much heterozygosity is normal differs by ancestry, so in an admixed cohort a single cohort-wide threshold could flag ancestry groups instead of bad samples. We will therefore split individuals into broad ancestry clusters first and then within each cluster compare each sample with the heterozygosity mean of the cluster. Note that here, we only remove excess * *heterozygosity* * (i.e. the high tail of the distribution), since more homozygous individuals would point towards consanguinity, not a bad sample. Note that for a genetically homogeneous cohort (e.g. European), you can skip this clustering step and use one cohort-wide mean. 
 
   In the following command, we use PLINK to:
   - Prune (drop) one of every correlated variant pairs at r2 > 0.2, using a sliding window the size of 200 variants, and steps of 50 variants. We restrict our pruning to the autosomes and common (MAF >
@@ -267,14 +272,14 @@ The container holds the tools but not the data (the reference panels are around 
   plink2 --bfile "$OUT/sex_check_finished" --extract "$OUT/pruned_longrange_ld.prune.in" --het --threads $THREADS --out "$OUT/full_cohort_het"
 
   # pca_clusters.R clusters the cohort on PC1 and PC2, then flags the individuals whose
-  # heterozygosity is more than 3 SD from the mean of their own cluster. It writes two files:
+  # heterozygosity is more than 3 SD above the mean of their own cluster. It writes two files:
   # het_outliers.txt, which the next command removes, and clusters.txt, which step 1.6 reads.
-  # For us it found clusters of 626, 243 and 59 individuals, and flagged 14 outliers.
+  # For us it found clusters of 626, 243 and 59 individuals, and flagged 4 overly heterozygous outliers.
   Rscript pca_clusters.R clusters
 
   plink2 --bfile "$OUT/sex_check_finished" --remove "$OUT/het_outliers.txt" --threads $THREADS --make-bed --out "$OUT/het_finished"
   ```
-  Leaving 914 samples.
+  Leaving 924 samples.
 
   <table>
     <tr>
@@ -288,11 +293,8 @@ The container holds the tools but not the data (the reference panels are around 
   </table>
 
   ### 1.4 Kinship estimation
-  Related individuals break the assumption that every sample in your analysis is an independent observation, which both the PRS evaluation and any association testing rely on. This step also checks whether
-  there are any duplicate samples in our data, which can also bias any future analysis we want to do. We estimate kinship with the KING algorithm, which is robust to the population structure that we just
-  observed in our PCA. KING runs on the same pruned variant list. For each pair of individuals, we get a kinship coefficient, which is the probability that an allele drawn from both persons is inherited
-  from the same ancestor. As mentioned in the paper, we use the following thresholds, based on the paper by [Manichaikul et al](https://www.cog-genomics.org/static/pdf/Manichaikuletal2010.pdf):
-
+  Related individuals are not independent observations, and duplicates are sometimes the same person counted twice (however, could also be monozygotic twins). KING is robust to population structure we just saw and runs on the same pruned variants. We use thresholds specified by [Manichaikul et al](https://www.cog-genomics.org/static/pdf/Manichaikuletal2010.pdf): 
+  
   |Threshold|Relationship|
   |---|---|
   |<0.0442|Unrelated|
@@ -303,69 +305,45 @@ The container holds the tools but not the data (the reference panels are around 
 
   ```bash
   plink2 --bfile "$OUT/het_finished" --extract "$OUT/pruned_longrange_ld.prune.in" --make-king-table --threads $THREADS --out "$OUT/kinship"
+  Rscript figures.R kinship
+
+  plink2 --bfile "$OUT/het_finished" --extract "$OUT/pruned_longrange_ld.prune.in" \
+       --king-cutoff 0.0884 --threads $THREADS --out "$OUT/remove_related_individuals"
+
+  plink2 --bfile "$OUT/het_finished" --remove "$OUT/remove_related_individuals.king.cutoff.out.id" \
+       --threads $THREADS --make-bed --out "$OUT/unrelated_individuals"
   ```
-  Let's look at the count within each band. We now have 914 samples and a total of 417,241 sample pairs to be tested.
+  Let's look at the count within each band. We now have 924 samples and a total of 417,241 sample pairs to be tested.
 
   |Threshold|Count|
   |---|---|
-  |<0.0442|       417160|
+  |<0.0442|       426,426|
   |0.0442-0.0884|26|
   |0.0884-0.177|14|
   |0.177-0.354|33|
   |>0.354|8|
 
-  The 8 pairs above 0.35 are worth looking at individually rather than counting. Four of them are pairs that share a sample ID, so they are the same person genotyped twice. The other four are pairs with
-  different sample IDs, and two of those are discordant for case/control status, meaning the same DNA appears in our data once as a case and once as a control. That is a labelling problem rather than a
-  genetics one, and it is worth resolving with whoever assembled the cohort. Either way both members of such a pair cannot stay.
-  It is also worthwhile to mention that it is important to perform the heterozygosity step before estimating kinship, since if we would run this kinship step without checking heterozygosity first, we would
-  include possible contaminated samples, which looks slightly related to everybody. In our case, this would have resulted in 1,531 pairs in the 0.04-0.09 band!
+  In our data, some people are clearly related. Moreover, there are 8 pairs that are either twins or duplicate samples. Four of these 8 share a sample ID, so these are likely people who were genotyped twice. The other four have different sample IDs, and for one of these pairs, one sample is a case and the other a control. We do not know whether these are genuine twins or the same person enrolled twice, which is why we removed these samples just to be sure. In total, using a threshold of >0.0884, this removes 44 samples, leaving 880. 
 
-  Let's remove one of each pair with a kinship coefficient > 0.09, corroborating with second degree or closer relatives. The --king-cutoff works out which sample to drop so that the fewest samples are lost.
-
-  ```bash
-  plink2 --bfile "$OUT/het_finished" --extract "$OUT/pruned_longrange_ld.prune.in" \
-         --king-cutoff 0.0884 --threads $THREADS --out "$OUT/remove_related_individuals"
-
-  plink2 --bfile "$OUT/het_finished" --remove "$OUT/remove_related_individuals.out.id" \
-         --threads $THREADS --make-bed --out "$OUT/unrelated_individuals"
-  ```
-  For us this removed 44 samples, leaving 870. Note that the file PLINK writes has a header line, so it has 45 lines for 44 samples - --remove knows this, but do not be caught out if you count them
-  yourself.
+  Interesting note: if we wouldn't have removed overly heterozygous individuals at the last step, the third-degree relative band would include 1,174 pairs instead of 26 pairs, because the four contaminated samples looked slightly related to everybody! 
 
 
   ### 1.5 Strict variant filter and differential missingness
   Now that we cleaned up all our samples, we repeat the variant filtering at the threshold we actually wanted: a 98% call rate. Doing this only now rather than at the beginning means that a variant is not
-  dropped on the basis of samples that have been removed.
+  dropped on the basis of samples that have been removed.  At this stage, we also test differential missingness between the cases and controls. Since our cases and controls were genotyped on separate plates, variants could fail more often on one set of plates, resulting in more missingness in cases than controls or vice versa. This difference can show up as a false association later on, which is why for every variant we test whether its missingness differs between cases and controls. We do this after the strict variant filter so that we test on the final set of samples. Note this can only be done in PLINK 1.9.
+
 
   ```bash
   plink2 --bfile "$OUT/unrelated_individuals" --geno 0.02 --threads $THREADS --make-bed --out "$OUT/strict_variant_filter"
-  ```
-  For us this removed 9,026 variants, leaving 854,451.
 
-  At this stage, we also test differential missingness between the cases and controls. Since our cases and controls were genotyped on separate plates, variants could fail more often on one set of plates,
-  resulting in more missingness in cases than controls or vice versa. This difference can show up as a false association later on, which is why for every variant we test whether its missingness differs
-  between cases and controls. We do this after the strict variant filter so that we test on the final set of samples. Note this can only be done in PLINK 1.9.
-
-  PLINK wants to know what samples are cases, so we extract those from the phenotype file. We use a command called "grep", which can rapidly search and filter for specific strings in our phenotyping file.
-  Adding "-w" makes sure that we extract whole words that exactly match what we are looking for (e.g. if we would also have "NonCase" in our file and not use -w, then we would also extract that). We use
-  "cut -f2,3" to cut to just the second and third fields (columns).
-
-  ```bash
   grep -w Case "$PHENO" | cut -f2,3 > "$OUT/cases.txt"
-  plink --bfile "$OUT/strict_variant_filter" --make-pheno "$OUT/cases.txt" '*' --test-missing \
-        --threads $THREADS --out "$OUT/diff_missingness"
-  ```
-  We only filter for variants that are significantly different in their missingness between cases and controls, so we use awk to filter for variant IDs (column 2) with a p-value (column 5) below 1e-5.
-  ```bash
-  awk 'NR>1 && $5<1e-5 {print $2}' "$OUT/diff_missingness.missing" > "$OUT/diff_missingness_remove.txt"
-  ```
-  Now we can use PLINK2 again to exclude these variants. For us, this only excluded 3 variants, leaving 854,448.
+  plink --bfile "$OUT/strict_variant_filter" --make-pheno "$OUT/cases.txt" '*' --test-missing --threads $THREADS --out "$OUT/diff_missingness"
 
-  One note on our own numbers: we added this test after the run that produced everything below, so the variant counts from 1.6 onwards are from a chain in which those 3 variants were still present. Removing
-  3 of 854,000 changes nothing that matters, but it is why 1.6 starts from 854,451 rather than 854,448.
-  ```bash
-  plink2 --bfile "$OUT/strict_variant_filter" --exclude "$OUT/diff_missingness_remove.txt" \
-         --threads $THREADS --make-bed --out "$OUT/diff_missingness_finished"
+  awk 'NR>1 && $5<1e-5 {print $2}' "$OUT/diff_missingness.missing" > "$OUT/diff_missingness_remove.txt"
+  plink2 --bfile "$OUT/strict_variant_filter" --exclude "$OUT/diff_missingness_remove.txt" --threads $THREADS --make-bed --out "$OUT/diff_missingness_finished"
+  ```
+  For us, the strict missingness filter removed 9,120 variants, and the differential missingness filter 3 more, leaving 854,354 variants. 
+
   ```
 
   ### 1.6 Hardy-Weinberg equilibrium
@@ -378,49 +356,40 @@ The container holds the tools but not the data (the reference panels are around 
   cluster.
 
   First we make a list of the controls. In a .fam file the sixth column holds the phenotype, where 1 is a control and 2 a case, so we keep the rows where that column is 1 and print the FID and IID that
-  PLINK needs.
-
-  ```bash
-  awk '$6==1 {print $1"\t"$2}' "$OUT/diff_missingness_finished.fam" > "$OUT/control_samples.txt"
-  ```
-
-  Next we split those controls by cluster and run the test inside each one. The awk command reads two files in turn. From the first, the control list, it remembers every IID. From the second, clusters.txt,
-  it keeps the rows whose cluster number (the third column) is the cluster we are on and whose IID it saw in the control list. FNR>1 skips the header line of clusters.txt.
-
-  ```bash
-  for k in 1 2 3; do
-    awk -v k=$k 'NR==FNR {ctl[$2]=1; next} FNR>1 && $3==k && ctl[$2] {print $1"\t"$2}' \
-        "$OUT/control_samples.txt" "$OUT/clusters.txt" > "$OUT/controls_cluster${k}.txt"
-
-    plink2 --bfile "$OUT/diff_missingness_finished" --keep "$OUT/controls_cluster${k}.txt" \
-           --hwe 1e-6 --write-snplist --threads $THREADS --out "$OUT/hwe_cluster${k}"
-  done
-  ```
-
-  Each run writes out the variants that passed in that cluster. A variant has to pass in all three, so we pool the three lists, count how often each variant appears, and keep the ones that appear three
+  PLINK needs. Then we split those controls by cluster and run the test inside each one. The awk command reads two files in turn. From the first, the control list, it remembers every IID. From the second, clusters.txt,
+  it keeps the rows whose cluster number (the third column) is the cluster we are on and whose IID it saw in the control list. FNR>1 skips the header line of clusters.txt. Each run writes out the variants that passed in that cluster. A variant has to pass in all three, so we pool the three lists, count how often each variant appears, and keep the ones that appear three
   times.
 
-  ```bash
-  sort "$OUT"/hwe_cluster[123].snplist | uniq -c | awk '$1==3 {print $2}' > "$OUT/hwe_passed.snplist"
+```bash
+awk '$6==1 {print $1"\t"$2}' "$OUT/diff_missingness_finished.fam" > "$OUT/control_samples.txt"
 
-  plink2 --bfile "$OUT/diff_missingness_finished" --extract "$OUT/hwe_passed.snplist" \
-         --threads $THREADS --make-bed --out "$OUT/hwe_completed"
-  ```
+for k in 1 2 3; do
+  awk -v k=$k 'NR==FNR {ctl[$2]=1; next} FNR>1 && $3==k && ctl[$2] {print $1"\t"$2}' \
+      "$OUT/control_samples.txt" "$OUT/clusters.txt" > "$OUT/controls_cluster${k}.txt"
 
-  For us this removed 296 of the 854,451 variants, leaving 854,155. The numbers per cluster show why it is worth doing this way:
+  plink2 --bfile "$OUT/diff_missingness_finished" --keep "$OUT/controls_cluster${k}.txt" \
+         --hwe 1e-6 --write-snplist --threads $THREADS --out "$OUT/hwe_cluster${k}"
+done
+
+sort "$OUT"/hwe_cluster[123].snplist | uniq -c | awk '$1==3 {print $2}' > "$OUT/hwe_passed.snplist"
+plink2 --bfile "$OUT/diff_missingness_finished" --extract "$OUT/hwe_passed.snplist" \
+       --threads $THREADS --make-bed --out "$OUT/hwe_completed"
+```
+
+  For us this removed 298 variants, leaving 854,056. The numbers per cluster show why it is worthwhile doing this way:
 
   |                                            | Controls | Failing HWE at p < 1e-6 |
   |--------------------------------------------|----------|-------------------------|
   | Cluster 1                                  | 19       | 53                      |
-  | Cluster 2                                  | 110      | 129                     |
-  | Cluster 3                                  | 262      | 287                     |
-  | Everybody pooled together                  | 391      | 409                     |
-  | Failing in at least one cluster (what we remove) |    | 296                     |
+  | Cluster 2                                  | 112      | 126                     |
+  | Cluster 3                                  | 264      | 289                     |
+  | Everybody pooled together                  | 395      | 410                     |
+  | Failing in at least one cluster (what we remove) |    | 298                     |
   | Failing in all three clusters               |         | 53                      |
 
   Pooling the whole cohort flags 409 variants, but 116 of those fail in no single cluster. Those 116 only look out of HWE because three groups with different allele frequencies were added together, which
   is exactly the artefact described above, and testing per cluster keeps them in the data. The per-cluster test also catches 3 variants that the pooled test missed. Note that cluster 1 has only 19
-  controls, so the test has little power there, and its 53 failures are a subset of the failures in both of the other clusters.
+  controls, so the test has little power there.
 
   ### 1.7 Minor allele frequency
   We now filter out variants with a MAF below 1%, since at our sample size, a rare variant is carried by too few people to reliably estimate an effect for, and genotype errors also tend to concentrate at
@@ -430,9 +399,9 @@ The container holds the tools but not the data (the reference panels are around 
   ```bash
   plink2 --bfile "$OUT/hwe_completed" --maf 0.01 --threads $THREADS --make-bed --out "$OUT/MAF"
   ```
-  For us this removed 403,302 variants, leaving 450,740.
+  For us this removed 402,072 variants.
 
-  We are now left with 870 samples (479 cases, 391 controls) and 450,740 variants.
+  We are now left with 880 samples (485 cases, 395 controls) and 451,984 variants.
 
   ### 1.8 Variant harmonization
   Different datasets can describe the same variant in different ways (e.g. on a different genome build, on the other DNA strand, or with the REF and ALT alleles swapped). It is important to have our dataset
@@ -453,28 +422,59 @@ The container holds the tools but not the data (the reference panels are around 
 
   #### Step 1: Check the genome build
 
-  All files we use are on build GRCh37, and we need to make absolutely sure that our data is on that build as well. The easiest way to do this is by looking at chromosome 1, which is 249,250,621 bases long
-  on GRCh37, but only 248,956,422 on GRCh38. So we look up the highest position of any variant on chromosome 1 in our data: if it lies beyond 248,956,422, it cannot exist on GRCh38, so our data must be on
-  GRCh37.
+  All files we use are on build GRCh37, and we need to make absolutely sure that our data is on that build as well. Since a variant cannot be located past the end of its own chromosome, a position that overshoots rules that build out. For each chromosome, we check whether the length of that chromosome rules out either GRCh37 or GRCh38. 
 
+  ```bash
+ cat > "$OUT/chrom_lengths.txt" <<'EOF'
+  1 249250621 248956422
+  ...                       # 22 rows: chromosome, GRCh37 length, GRCh38 length
+  22 51304566 50818468
+  EOF
+
+  awk 'NR==FNR {b37[$1]=$2; b38[$1]=$3; next}
+       !($1 in b37) {next} #We use this to correct for X, XY, Y and MT strings in the .bim file. 
+       $4 > b37[$1] && !s37[$1]++ {n37++} #if the position in column 4 is past the GRCh37 end of this chromosome and this is the first time that's been true for this chromosome, add one.
+       $4 > b38[$1] && !s38[$1]++ {n38++} #same for GRCh38.
+       END {print "chromosomes that rule out GRCh37:", n37+0
+            print "chromosomes that rule out GRCh38:", n38+0}' \
+      "$OUT/chrom_lengths.txt" "$OUT/MAF.bim"
+```
+  
   ```bash
   awk '$1==1 && $4>max {max=$4} END {print max}' "$OUT/MAF.bim"
   ```
-  This looks at lines where the chromosome is 1 ($1==1) and where the position is larger than the largest seen so far ($4>max). If the current position is the largest seen so far, remember that position
-  ({max=$4}) and after the last line, print the largest position found (END {print max}).
-  For us, this prints 249,212,878, so our data is on GRCh37. If your data is on GRCh38, you can either change the above files to match GRCh38, or move your own data to GRCh37 with UCSC liftOver. The Linux
-  binary is [here](https://hgdownload.soe.ucsc.edu/admin/exe/liftOver.gz) and the chain file you need for GRCh38 to GRCh37 is hg38ToHg19.over.chain.gz,
-  [here](https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/). Note that UCSC chain files are free for academic and non-profit use but need a licence otherwise.
+  On our data: 0 rule out GRCh37, 14 rule out GRCh38.
 
   #### Step 2: Calculate the allele frequency of every variant in your data
 
   The checking tool compares the allele frequencies with those in the 1000 Genomes file, and it expects the .frq format, which is only produced by PLINK 1.9. It is important to use the --keep-allele-order
   command in here, since PLINK 1.9 by default reports only the frequency of the rarer allele for every variant, which does not always correspond to the allele reported in the A1 column of the .bim file.
-  Since the tool assumes this does correspond, without this command it compares the wrong frequencies for these variants (in our case this goes for 1,811 variants).
+  We then run the Rayner tool on our data
 
   ```bash
   plink --bfile "$OUT/MAF" --freq --keep-allele-order --threads "$THREADS" --out "$OUT/check_freq"
+  perl "$CHECK_BIM" -b "$OUT/MAF.bim" -f "$OUT/check_freq.frq" -r "$LEGEND" -g -p AMR
   ```
+`-g` says the reference is 1000 Genomes rather than HRC, and `-p AMR` picks the population closest
+to our cohort. Then apply the lists, in this order:
+
+```bash
+plink --bfile "$OUT/MAF" --exclude "$OUT/Exclude-MAF-1000G.txt" --threads "$THREADS" \
+      --make-bed --out "$OUT/variants_in_reference"
+plink --bfile "$OUT/variants_in_reference" --update-chr "$OUT/Chromosome-MAF-1000G.txt" \
+      --threads $THREADS --make-bed --out "$OUT/chr_updated"
+plink --bfile "$OUT/chr_updated" --update-map "$OUT/Position-MAF-1000G.txt" \
+      --threads "$THREADS" --make-bed --out "$OUT/pos_updated"
+plink --bfile "$OUT/pos_updated" --flip "$OUT/Strand-Flip-MAF-1000G.txt" \
+      --threads $THREADS --make-bed --out "$OUT/strand_flipped_correct"
+plink --bfile "$OUT/strand_flipped_correct" --a2-allele "$OUT/Force-Allele1-MAF-1000G.txt" \
+      --keep-allele-order --threads $THREADS --make-bed --out "$OUT/harmonization_finished"
+
+# Did it work? --ref-from-fa reads the reference allele off the genome itself.
+plink2 --bfile "$OUT/harmonization_finished" --fa "$FASTA" --ref-from-fa \
+       --threads $THREADS --make-just-bim --out "$OUT/harmonization_check"
+Rscript figures.R harmonization
+```
 
   #### Step 3: Run the perl script to compare your variants to 1000 Genomes
 
