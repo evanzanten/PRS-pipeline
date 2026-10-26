@@ -588,7 +588,7 @@ plink2 --bfile "$OUT/pca_cohort" --pca 10 approx --seed $SEED --threads $THREADS
       <td><img src="figures/pca_reference.png" alt="PC1 and PC2 of our cohort together with 1000 Genomes" width="500"></td>
     </tr>
     <tr>
-      <td align="center"><em>PC1 and PC2 of 870 cohort individuals (dark grey triangles) and 2,504 1000 Genomes reference individuals (coloured dots), over 104,478 LD-pruned autosomal variants shared between the datasets. Blue: African, red: Admixed American, green: East Asian, yellow: European, purple: South Asian</em></td>
+      <td align="center"><em>PC1 and PC2 of 880 cohort individuals (dark grey triangles) and 2,504 1000 Genomes reference individuals (coloured dots), over 104,478 LD-pruned autosomal variants shared between the datasets. Blue: African, red: Admixed American, green: East Asian, yellow: European, purple: South Asian</em></td>
     </tr>
   </table>
 
@@ -887,7 +887,7 @@ fwrite(merge(merge(fam, age, by = "IID"), pcs, by = "IID"),
   Instead of picking a p-value threshold, LDpred2 keeps every variant and shrinks the effect sizes, using how strongly variants are correlated with each other. It runs in R, in the bigsnpr package. We use
   the "auto" version, which learns the heritability and the proportion of variants with an effect from the summary statistics themselves, so it needs no tuning in our own data.
 
-  LDpred2 needs a correlation matrix. It can calculate one from your own genotypes, but that only works with a few thousand individuals or more: with our 870 the correlations are too noisy, and instead the
+  LDpred2 needs a correlation matrix. It can calculate one from your own genotypes, but that only works with a few thousand individuals or more: with our 880 the correlations are too noisy, and instead the
   authors have published a reference (computed in UK Biobank Europeans for 1.4 million HapMap3+ variants) that we will use. It is a large download (14 GB, 29 GB unpacked) and comes with a file describing
   the variants: map_hm3_plus.rds, see [here](https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061).
 
@@ -1160,22 +1160,22 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
 
   We do this with five-fold cross-validation, which works as follows in our cohort:
 
-  1. Split the 870 individuals into 5 groups of about 174, keeping the same case/control ratio in each (so roughly 96 cases and 78 controls per group).
+  1. Split the 880 individuals into 5 groups of about 176, keeping the same case/control ratio in each (so roughly 97 cases and 79 controls per group).
   2. Put one group aside and use only the other four to choose whatever the method leaves open:
      - PRSice-2 gives us 11 scores, one per p-value threshold from 5e-08 to 1. We fit the two regressions above at each threshold in those four groups, and keep the threshold where the PRS adds the most.
      - PRS-CSx gives us one score per ancestry. We fit a logistic regression on both at once in those four groups, which decides how much weight each ancestry gets.
-     - LDpred2 and PRS-CS have nothing to choose, so for them this step does nothing.
+     - LDpred2, PRS-CS and BridgePRS have nothing to choose, so for them this step does nothing.
   3. Apply that choice to the group we put aside, and keep those scores. This is the whole point: the choice was made without ever seeing the phenotypes of these individuals.
   4. Repeat until every group has been put aside once.
-  5. Everyone now has a score from a model that never saw their own phenotype. We put all 870 of those scores in one column, fit the two regressions on all 870 at once, and report the difference in
-  Nagelkerke R2 plus the AUC of the second model. Note that we use everybody here: the folds have already done their job, and an R2 from one group of 174 people would be far noisier than one estimate over
-  870.
+  5. Everyone now has a score from a model that never saw their own phenotype. We put all 880 of those scores in one column, fit the two regressions on all 880 at once, and report the difference in
+  Nagelkerke R2 plus the AUC of the second model. Note that we use everybody here: the folds have already done their job, and an R2 from one group of 176 people would be far noisier than one estimate over
+  880.
 
   Note what does and does not get recomputed here. The PRS itself is computed once, before all of this, and never again: the weights come from the GWAS and PLINK applies them to our dosages. The folds only
   pick between scores that already exist (PRSice-2) or work out how to combine them (PRS-CSx). This is only possible because the weights never used our phenotypes to begin with. If a method estimated its
   weights from your own data, you would have to redo that inside every fold.
 
-  Since the split into 5 groups is random, we repeat the whole thing 500 times and take the average. One split is just one draw: with only five repeats, PRSice-2 came out anywhere between 0.002 and 0.007
+  Since the split into 5 groups is random, we repeat the whole thing 500 times and take the average. One split is just one draw: with only five repeats, the R2 of PRSice-2 came out anywhere between 0.006 and 0.017
   depending on the seed we used. At 500 repeats the average settles down to about three decimals, so do not read too much into the last digit.
 
   Let's do this final step in R again:
@@ -1198,12 +1198,18 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
   d <- add_score(d, "prscs",   "prscs_score.sscore")
   d <- add_score(d, "csx_EUR", "prscsx_EUR_score.sscore")
   d <- add_score(d, "csx_AFR", "prscsx_AFR_score.sscore")
+  d <- add_score(d, "bridge",  "bridgeprs_score.sscore")
 
   #PRSice puts all its thresholds in one file and repeats the ID in an FID column, so we drop FID
   #while reading it in (leaving it in gives us two ID columns and the merge breaks)
   prsice     <- fread("prsice_eur.all_score", drop = "FID")
   thresholds <- setdiff(names(prsice), "IID")
   d <- merge(d, prsice, by = "IID")
+
+  #Let's scale the PRS to a mean of 0 and a standard deviation of 1:
+  SCORES <- c("ldpred2", "prscs", "bridge", "csx_EUR", "csx_AFR", thresholds)
+  for (s in SCORES) d[[s]] <- scale(d[[s]])[, 1]
+
 
   ##Now we specify the two models: M0 with just the covariates, M1 with the covariates plus a
   ##column called "score". The reformulate() function builds the model formula from a list of
@@ -1224,7 +1230,7 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
           (1 - exp(-deviance(m0) / nrow(x)))
     #Now the AUC. We ask the model to predict the probability of being a case (hence
     #type = "response", otherwise it gives log-odds), and rank those probabilities from 1 (lowest)
-    #to 870 (highest). We then sum the ranks of the cases, which should be high if the model is any
+    #to 880 (highest). We then sum the ranks of the cases, which should be high if the model is any
     #good, and subtract the lowest sum it could possibly have been (1 + 2 + 3 ... if the cases had
     #the lowest ranks). What is left is the number of case/control pairs where the case ranks above
     #the control, and n1*n0 is simply how many such pairs there are.
@@ -1236,32 +1242,36 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
   ##Then the cross-validation. The tune() function gets the training rows and the held-out rows,
   ##and gives back scores for the held-out ones. A method with nothing to tune simply ignores the
   ##training rows.
+  RESULTS <- data.frame()
   run <- function(name, tune) {
     r2 <- auc <- numeric(REPEATS)
     for (i in 1:REPEATS) {
-      fold <- integer(nrow(d))    #a vector of 870 zeros, no group numbers in it yet
+      fold <- integer(nrow(d))    #a vector of 880 zeros, no group numbers in it yet
       #rep_len writes 1,2,3,4,5,1,2,3,... until it is as long as the group in question, and
       #sample() shuffles it. We do the cases and the controls separately (hence the loop over
       #v = 0 and v = 1) so that every group ends up with the same case/control mix.
       for (v in 0:1) fold[d$y == v] <- sample(rep_len(1:5, sum(d$y == v)))
-      held <- numeric(nrow(d))    #again 870 empty slots, one per person, for their score
+      held <- numeric(nrow(d))    #again 880 empty slots, one per person, for their score
       #k is the group we put aside this time, so fold == k are its rows and fold != k are the rows
       #of the other four. After five rounds everyone has been put aside exactly once.
       for (k in 1:5) held[fold == k] <- tune(which(fold != k), which(fold == k))
       d$score <- held
-      m <- measure(d)             #both models, on all 870 at once
+      m <- measure(d)             #both models, on all 880 at once
       r2[i] <- m$r2; auc[i] <- m$auc
     }
     cat(sprintf("%-10s R2 = %.4f (sd %.4f)   AUC = %.3f\n", name, mean(r2), sd(r2), mean(auc)))
+    RESULTS <- rbind(RESULTS, data.frame(method = name, r2 = mean(r2), auc = mean(auc)))
   }
 
   ##Now let's apply all of this to our PRS methods!
   set.seed(1)   #so that the folds come out the same way every time we run it
 
-  #LDpred2 and PRS-CS have nothing we need to choose, so we just read the score off as it is and
+  #LDpred2, PRS-CS and BridgePRS have nothing we need to choose, so we just read the score off as it is and
   #ignore the training rows. This is also why their standard deviation below is exactly zero.
   run("LDpred2", function(train, held_out) d$ldpred2[held_out])
   run("PRS-CS",  function(train, held_out) d$prscs[held_out])
+  run("BridgePRS", function(train, held_out) d$bridge[held_out])
+
 
   #PRSice: we try every threshold in the training rows and keep the one that adds the most. Note
   #the x <- d[train], which takes a copy: writing into d itself here would overwrite the column
@@ -1273,41 +1283,95 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
     d[[ thresholds[which.max(gain)] ]][held_out]
   })
 
-  #PRS-CSx: we fit how much weight each ancestry score deserves, in the training rows
+  #PRS-CSx: we fit how much weight each ancestry score deserves in the training rows. We add the covariates to that fit as well, otherwise the fit will pick the best model as the model where stroke is predicted through ancestry. We scale within each ancestry again. 
   run("PRS-CSx", function(train, held_out) {
-    fit <- glm(y ~ csx_EUR + csx_AFR, d[train], family = binomial)
-    as.numeric(predict(fit, newdata = d[held_out]))
+    fit <- glm(reformulate(c(COVARIATES, "csx_EUR", "csx_AFR"), "y"), d[train], family = binomial)
+    b <- coef(fit)
+    scale(b["csx_EUR"] * d$csx_EUR[held_out] + b["csx_AFR"] * d$csx_AFR[held_out])[, 1]
   })
+
   ```
 
   For us this gives:
 
   | Method | Variants used | R2 | AUC |
   |---|---|---|---|
-  | LDpred2 | 1,190,225 | 0.0143 | 0.587 |
-  | PRS-CS | 1,082,490 | 0.0135 | 0.585 |
-  | PRSice-2 | 237,700 after clumping | 0.0041 (sd 0.0034) | 0.573 |
-  | PRS-CSx (EUR+AFR) | 1,082,490 and 913,987 | 0.0011 (sd 0.0014) | 0.570 |
+  | LDpred2 | 1,190,421 | 0.0153 | 0.603 |
+  | PRS-CS | 1,082,514 | 0.0150 | 0.603 |
+  | PRSice-2 | 238,218 after clumping | 0.0109 (sd 0.0049) | 0.597 |
+  | PRS-CSx (EUR+AFR) | 1,082,514 and 914,618 | 0.0068 (sd 0.0022) | 0.591 |
+  | BridgePRS | 1,415,252 | 0.0049 | 0.588|
 
-  Note that our covariates on their own already give an AUC of 0.567, so that is the starting point for this column rather than 0.5: age, sex and the PCs are in the model already, and the PRS only has to
-  beat them.
 
-  Two of these have a standard deviation and two do not. PRSice-2 and PRS-CSx are tuned inside each fold, so their result depends on how the split happened to fall, and the standard deviation tells us how
-  much a single five-fold run would move around. LDpred2 and PRS-CS need no tuning, so the same score is used in every fold and their standard deviation is exactly zero by construction. That is a property
+  Note that our covariates on their own already give an AUC of 0.578, so that is the baseline that a PRS would need to add to (this includes age, sex and the first 10 PCs) 
+  
+  The R2 metrics of PRSice-2 and PRS-CSx have a standard deviation (the other methods do not), since PRSice-2 and PRS-CSx are tuned inside each fold, so their result depends on how the split happened to fall, and the standard deviation tells us how
+  much a single five-fold run would move around. LDpred2, PRS-CS and BridgePRS need no tuning, so the same score is used in every fold and their standard deviation is exactly zero by construction. That is a property
   of the procedure, not a sign that they are measured more precisely.
 
-  **Do check that your PRS beats random noise.** Since the regression coefficients are fitted in the same 870 people that we then measure the R2 in, adding any column at all buys us a little bit of R2,
-  whether it contains signal or not. To see how much, we ran the exact same measurement on 2,000 scores of pure random numbers:
+  **Do check that your PRS beats random noise.** Since the regression coefficients are fitted in the same 880 people that we then measure the R2 in, adding any column at all buys us a little bit of R2,
+  whether it contains signal or not. To see how much, we used 1M variants and effect alleles of LDpred2 and shuffled the weights of the variants: 
+
+  ```R
+  set.seed(123)
+  #First get the weights file of LDpred2
+  w <- fread("ldpred2_weights.txt")
+  setnames(w, 1:3, c("SNP", "A1", "beta"))
+
+  #Generate 2000 new columns to put the shuffled weights in. We do this in batches of 200, otherwise we'll run out of memory
+  for(b in 1:10){
+  m <- replicate(200, sample(w$beta))
+  fwrite(data.table(SNP = w$SNP, A1 = w$A1, round(m, 6)),
+         sprintf("null_weights_b%d.txt", b), sep = "\t")
+  }
+
+
+  ```
+
+  ```bash
+  #Here, we use PLINK again to get the PRS for all the weight columns we just generated
+  for b in $(seq 1 10); do
+  plink2 --pfile imputed --score null_weights_b${b}.txt 1 2 header-read \
+           --score-col-nums 3-202 --out null_scores_b${b}
+  rm -f null_weights_b${b}.txt      #each of these is about 1.6 GB
+  done
+  ```
+
+  ```R
+  #Now we read in the null scores we just generated with PLINK per batch and then compute R2 and AUC per shuffle.
+  read_batch <- function(b) {
+    s     <- fread(sprintf("null_scores_b%d.sscore", b))
+    cols  <- grep("_AVG$", names(s), value = TRUE)
+    nulls <- merge(d, s[, c("IID", cols), with = FALSE], by = "IID")
+    t(sapply(cols, function(cl) {
+      nulls$score <- scale(nulls[[cl]])[, 1]
+      unlist(measure(nulls))
+    }))
+  }
+   #do.call(rbind, ...) glues the ten 200-row matrices into one of 2000 rows with two columns (r2 and auc)
+  res <- do.call(rbind, lapply(1:10, read_batch))
+
+  #Let's make the noise floor, which is the 90th percentile of these noise scores:
+  cat(sprintf("null scores: %d\n", nrow(res)))
+  cat(sprintf("mean   R2 %.4f   AUC %.3f\n", mean(res[, "r2"]),   mean(res[, "auc"])))
+  cat(sprintf("median R2 %.4f   AUC %.3f\n", median(res[, "r2"]), median(res[, "auc"])))
+  cat(sprintf("90th   R2 %.4f   AUC %.3f\n", quantile(res[, "r2"], 0.9),
+                                             quantile(res[, "auc"], 0.9)))
+
+  #For each PRS method we used, we compare the percentage of null scores each method beats in terms of the R2.
+  for (m in c("LDpred2", "PRS-CS", "PRSice-2", "PRS-CSx", "BridgePRS"))
+    cat(sprintf("%-10s beats %.1f%% of the null scores\n", m,
+                100 * mean(res[, "r2"] < RESULTS$r2[RESULTS$method == m])))
+```
+  
 
   | | R2 | AUC |
   |---|---|---|
-  | noise, mean | 0.0015 | 0.570 |
-  | noise, median | 0.0007 | - (not recorded)  |
-  | noise, 90th percentile | 0.0041 | 0.575 |
+  | noise, mean | 0.0014 | 0.580 |
+  | noise, median | 0.0006 | 0.579  |
+  | noise, 90th percentile | 0.0038 | 0.585 |
 
-  Compared to that, LDpred2 and PRS-CS are above 99.6% of the noise scores, so those are real. PRSice-2 sits exactly on the 90th percentile, meaning one noise score in ten does just as well, so it is
-  suggestive at best. PRS-CSx is beaten by 40% of the noise scores and its AUC is exactly the noise average, so we have no evidence that it predicts anything at all. That is what you would expect though,
-  since the second arm is much smaller (3,423 versus 236,506 effective individuals) and neither arm matches the ancestry of our cohort.
+  Compared to that, LDpred2 and PRS-CS are above 99.95% of the noise scores, PRSice-2 above 99.3%, PRS-CSx above 96.9%, and BridgePRS above 93.0%.
 
   Both figures together look like this:
 
@@ -1316,14 +1380,14 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
       <td><img src="figures/prs_comparison.png" alt="Incremental R2 and AUC per PRS method, with the noise floor marked" width="700"></td>
     </tr>
     <tr>
-      <td align="center"><em>Incremental Nagelkerke R&sup2; (A) and AUC (B) per method. The shaded band in A and the dashed line in B are the 90th percentile of the noise scores, and the solid line in B is the covariates-only model. A method that does not clear the shaded band or the dashed line has not been shown to beat a random score. Error bars in A are 1 standard deviation over the 500 repeats, which is why only the two tuned methods have them.</em></td>
+      <td align="center"><em>Incremental Nagelkerke R&sup2; (A) and AUC (B) per method. The shaded band in A and the dashed line in B are the 90th percentile of the noise scores, and the solid line in B is the covariates-only model. A method that does not clear the shaded band or the dashed line has not been shown to beat a random score.</em></td>
     </tr>
   </table>
 
 
-  That check just costs you a couple of minutes and is a nice sanity check that we recommend. So run your pipeline once on a column of randomly generated PRS, and if your real PRS does not beat these random PRS by a wide margin, then your PRS brings nothing to the table. This check is suitable in case you used methods where you didn't have to make any choice on the parameters (PRS-CS and LDpred2), since their score is fixed. In case you used PRSice-2 and PRS-CSx you would, strictly speaking, need to shuffle the case/control labels and go through the cross-validation again, which we did not do here. 
+  That check just costs you a couple of minutes and is a nice sanity check that we recommend. So run your pipeline once on a column of randomly generated PRS, and if your real PRS does not beat these random PRS by a wide margin, then your PRS brings nothing to the table. This check is suitable in case you used methods where you didn't have to make any choice on the parameters (PRS-CS, LDpred2 and BridgePRS), since their score is fixed. In case you used PRSice-2 and PRS-CSx you would, strictly speaking, need to shuffle the case/control labels and go through the cross-validation again, which we did not do here. 
 
-  Your next question, looking at the numbers in the table above with the R2 and AUC per method, could be why the R2 is so low. Do note that you have to interpret this R2 relative to the maximum heritability it CAN capture, which is between ~0.05-~0.07 as estimated by LDSC and LDpred2, respectively. So it isn't that low after all. Look at our winning method, LDpred2, which has an R2 of 0.0143 and an AUC of 0.587. LDPred2-auto estimated that about 1% of variants carry a real effect, so that would be around 13000 out of the 1.19 million we put in. It merely shrunk all variants but kept all the information, while a worse-performing tool like PRSice-2 throws away A LOT of variants and therefore contains less information, and that shows.  In conclusion, our winning method is LDpred2. It is one of only two methods that 'beats' both the model with only the covariates and the model with the random noise scores. It explains around 1.4% of the variation in case/control status, which sounds small but should be read against the ceiling (the SNP heritability of ischemic stroke in our data is around 5-7%). 
+  Your next question, looking at the numbers in the table above with the R2 and AUC per method, could be why the R2 is so low. Do note that you have to interpret this R2 relative to the maximum heritability it CAN capture, which is between ~0.05-~0.07 as estimated by LDSC and LDpred2, respectively. So it isn't that low after all. Look at one of our winning method, LDpred2, which has an R2 of 0.0153 and an AUC of 0.603. LDPred2-auto estimated that about 1% of variants carry a real effect, so that would be around 12K out of the 1.19 million we put in. It merely shrunk all variants but kept all the information, while a worse-performing tool like PRSice-2 throws away A LOT of variants and therefore contains less information, and that shows. In conclusion, our winning method is LDpred2. It explains around 1.5% of the variation in case/control status, which sounds small but should be read against the ceiling (the SNP heritability of ischemic stroke in our data is around 5-7%). 
 
 
 Now, finally, we are finished with the pipeline. Congratulations on computing your first PRS! I hope you learned something and that adding all these explanations to the code helped you make good decisions for your analysis. 
