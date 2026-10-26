@@ -1260,7 +1260,7 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
       r2[i] <- m$r2; auc[i] <- m$auc
     }
     cat(sprintf("%-10s R2 = %.4f (sd %.4f)   AUC = %.3f\n", name, mean(r2), sd(r2), mean(auc)))
-    RESULTS <- rbind(RESULTS, data.frame(method = name, r2 = mean(r2), auc = mean(auc)))
+    RESULTS <<- rbind(RESULTS, data.frame(method = name, r2 = mean(r2), auc = mean(auc)))
   }
 
   ##Now let's apply all of this to our PRS methods!
@@ -1385,9 +1385,9 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
   </table>
 
 
-  That check just costs you a couple of minutes and is a nice sanity check that we recommend. So run your pipeline once on a column of randomly generated PRS, and if your real PRS does not beat these random PRS by a wide margin, then your PRS brings nothing to the table. This check is suitable in case you used methods where you didn't have to make any choice on the parameters (PRS-CS, LDpred2 and BridgePRS), since their score is fixed. In case you used PRSice-2 and PRS-CSx you would, strictly speaking, need to shuffle the case/control labels and go through the cross-validation again, which we did not do here. 
+  That check just costs you around 15 minutes and is a nice sanity check that we recommend. So run your pipeline once on a set of randomly shuffled weights, and if your real PRS does not beat these random PRS by a wide margin, then your PRS brings nothing to the table. This check is suitable in case you used methods where you didn't have to make any choice on the parameters (PRS-CS, LDpred2 and BridgePRS), since their score is fixed. In case you used PRSice-2 and PRS-CSx you would, strictly speaking, need to shuffle the case/control labels and go through the cross-validation again, which we did not do here. 
 
-  Your next question, looking at the numbers in the table above with the R2 and AUC per method, could be why the R2 is so low. Do note that you have to interpret this R2 relative to the maximum heritability it CAN capture, which is between ~0.05-~0.07 as estimated by LDSC and LDpred2, respectively. So it isn't that low after all. Look at one of our winning method, LDpred2, which has an R2 of 0.0153 and an AUC of 0.603. LDPred2-auto estimated that about 1% of variants carry a real effect, so that would be around 12K out of the 1.19 million we put in. It merely shrunk all variants but kept all the information, while a worse-performing tool like PRSice-2 throws away A LOT of variants and therefore contains less information, and that shows. In conclusion, our winning method is LDpred2. It explains around 1.5% of the variation in case/control status, which sounds small but should be read against the ceiling (the SNP heritability of ischemic stroke in our data is around 5-7%). 
+  Your next question, looking at the numbers in the table above with the R2 and AUC per method, could be why the R2 is so low. Do note that you have to interpret this R2 relative to the maximum heritability it CAN capture, which is between ~0.05-~0.07 as estimated by LDSC and LDpred2, respectively. So it isn't that low after all. Look at one of our winning methods, LDpred2, which has an R2 of 0.0153 and an AUC of 0.603. LDPred2-auto estimated that about 1% of variants carry a real effect, so that would be around 12K out of the 1.19 million we put in. It merely shrunk all variants but kept all the information, while a worse-performing tool like PRSice-2 throws away A LOT of variants and therefore contains less information, and that shows. In conclusion, our winning methods are LDpred2 and PRS-CS, which both explain around 1.5% of the variation in case/control status, which sounds small but should be read against the ceiling (the SNP heritability of ischemic stroke in our data is around 5-7%). 
 
 
 Now, finally, we are finished with the pipeline. Congratulations on computing your first PRS! I hope you learned something and that adding all these explanations to the code helped you make good decisions for your analysis. 
