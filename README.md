@@ -571,7 +571,7 @@ We now combine the 22 chromosomes into one file with PLINK 1.9. --merge-list tak
 ```
  Let's run the PCA!
 
-# PCA 1, with 1000 genomes for ancestry assignment
+**PCA 1, with 1000 genomes for ancestry assignment**
 ```bash
 plink2 --bfile "$OUT/pca_merged" --pca 10 approx --seed $SEED --threads $THREADS \
        --out "$OUT/pca_with_reference"
@@ -579,7 +579,7 @@ Rscript pca_clusters.R ancestry
 Rscript figures.R pca_reference
 ```
 
-# PCA 2: our cohort alone, for the covariates in 3.8.
+**PCA 2: our cohort alone, for the covariates in 3.8**
 ```
 plink2 --bfile "$OUT/pca_cohort" --pca 10 approx --seed $SEED --threads $THREADS \
        --out "$OUT/pca_cohort_only"
