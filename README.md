@@ -27,8 +27,9 @@
   **3.3 PRSice-2**  
   **3.4 LDpred2**  
   **3.5 PRS-CS**  
-  **3.6 PRS-CSx**  
-  **3.7 Validation of the PRS**  
+  **3.6 PRS-CSx** 
+  **3.7 PRS-CSx**  
+  **3.8 Validation of the PRS**  
 
 
   ### Preparation
@@ -1064,7 +1065,7 @@ fwrite(data.table(info$rsid, info$a1, beta), OUTFILE, sep = "\t", col.names = TR
 
 
 ### 3.7 BridgePRS
-Again, we derive PRS for two different ancestries, but BridgePRS works a bit differently from PRS-CS. It fits the European arm first and uses it as a prior for the African arm instead of running each ancestry in parallel and leaving you to weigh the scores. This is useful when one of the ancestries is small in the GWAS, and for us, the African arm in GIGASTROKE contains 3,423 cases while the European arm contains 236,506 cases, so the European arm is way larger. However, the coding work for BridgePRS is far more challenging and lengthy than the other PRS methods. So if you're up for a challenge, be BridgePRS's guest. In short, It wants its own linkage-disequilibrium reference as PLINK filesets split by chromosome, its own block definitions, and it names every variant `chromosome:position:reference:alternate`, so your genotypes, your summary statistics and the reference must all be renamed to match before anything will line up.
+Again, we derive PRS for two different ancestries, but BridgePRS works a bit differently from PRS-CS. It fits the European arm first and uses it as a prior for the African arm instead of running each ancestry in parallel and leaving you to weigh the scores. This is useful when one of the ancestries is small in the GWAS, and for us, the African arm in GIGASTROKE contains 894 cases while the European arm contains 62,100 cases, so the European arm is way larger. However, the coding work for BridgePRS is far more challenging and lengthy than the other PRS methods. So if you're up for a challenge, be BridgePRS's guest. In short, It wants its own linkage-disequilibrium reference as PLINK filesets split by chromosome, its own block definitions, and it names every variant `chromosome:position:reference:alternate`, so your genotypes, your summary statistics and the reference must all be renamed to match before anything will line up.
 
 ```bash
 BR=$OUT/bridgeprs                     # BridgePRS wants a working tree of its own
@@ -1136,18 +1137,18 @@ awk '
   FNR==1  { next }
   { split($1, f, ":"); k = key(f[1], f[2], $2, $3)
     if (k in id && $4 != 0) print id[k], $2, $4 }' \
-  <(grep -v '^##' "$OUT/imputed.pvar") "$BR/out/AFR/snp_weights_weighted_model.dat" \
+  <(grep -v '^##' "$OUT/imputed.pvar") "$BR/out/AFR/snp_weights_best_model.dat" \
   > "$OUT/bridgeprs_weights.txt"
 
 plink2 --pfile "$OUT/imputed" --score "$OUT/bridgeprs_weights.txt" 1 2 3 \
        --threads $THREADS --out "$OUT/bridgeprs_score"
 ```
 
-For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661 African reference individuals, 6,799,645 and 6,349,225 renamed summary statistics. Out of 1,726,521 pooled weights, 1,452,898 were non-zero and every one of them was found in our dosages.
+For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661 African reference individuals, 6,799,645 and 6,349,225 renamed summary statistics. Out of 1,726,521 pooled weights, 1,415,252 were non-zero and every one of them was found in our dosages.
 
 
 
-  ### 3.7 Validation of the PRS
+  ### 3.8 Validation of the PRS
 
   Each method gives every individual a score, and two of them leave a choice open: which p-value threshold to use for PRSice-2, and how much weight to give each of the two ancestry scores of PRS-CSx. If we
   make that choice and then check how well it does in the same people, the result is too optimistic, since we picked the winner using their phenotypes. This is also why we do not use the R2 that PRSice
