@@ -46,14 +46,17 @@
 
 The container holds the tools but not the data (the reference panels are around 20 GB each, they are public, and they change on their own schedule). To choose the right reference panel, we refer to our paper section 4.1.
 
+
   2. **Input data**
      This pipeline is built for SNP array data, although some of the steps are also relevant for whole exome sequencing (WES) and whole genome sequencing (WGS). For full WES and WGS pipelines, we recommend
   the Nature Protocols tutorial by Sealock et al., *Tutorial: guidelines for quality filtering of whole-exome and whole-genome sequencing data for population-scale association analyses*, Nature Protocols
   20:2372-2382 (2025), which covers sample and variant filtering and compares the commonly used tools. In our case, we use SNP array data in a variant call format (VCF) file. Our data is derived from a
   stroke GWAS in 986 Brazilian individuals (513 cases, 473 controls).
 
-  3. **Reference data**
+
+  4. **Reference data**
      The reference data is not in the above container since it changes versions often. You can fetch what you need from this table:
+
 | What | Used in | Where |
 |---|---|---|
 | 1000 Genomes Phase 3 VCFs (GRCh37) and the panel file | 1.9 | [1000 Genomes FTP](https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/) |
@@ -66,8 +69,14 @@ The container holds the tools but not the data (the reference panels are around 
 | BridgePRS | 3.7 | [BridgePRS](https://github.com/clivehoggart/BridgePRS) |
 | Your GWAS summary statistics | 3.1 | [GWAS Catalog](https://www.ebi.ac.uk/gwas/home) |
 
+
+
+
   4. **Scripts in this repository**
      This pipeline runs all QC steps and PRS calculation and validation in bash, and we have also several separate R scripts to (1) do a rough ancestry clustering, determine outliers based on heterozygosity per ancestry cluster, and do a more fine-grained ancestry assignment (pca_clusters.R), (2) if needed (if your GWAS does not contain rsIDs), add rsIDs to a GWAS summary statistics file (match_sumstats.R), and (3) create figures to gain insights into your data distributions (see figures below, figures.R).
+     
+
+
      
   5. **Configuration**
   Set these once, every command below uses these variables. 
@@ -80,6 +89,8 @@ The container holds the tools but not the data (the reference panels are around 
   PHENO=/path_to_metadata/phenotypes.txt
   ```
   The phenotype file needs one row per sample with an FID, IID, case/control status, sex and age. 
+
+  
 
   ### Inspecting your data
 
@@ -162,8 +173,7 @@ The container holds the tools but not the data (the reference panels are around 
   ```
 
   Now we can use PLINK. Remember to specify the threads and the output directory we put in our configuration! Here, we first refer to our VCF again, then tell PLINK that the IID and FID are the same. We
-  then update the sex and phenotype status and specify the number of threads PLINK may use. We then generate PLINK files, including a BED, BIM and FAM file (see the [PLINK file format
-  reference](https://www.cog-genomics.org/plink/1.9/formats) for details on those filetypes; note that a PLINK .bed has nothing to do with the UCSC Genome Browser's BED format).
+  then update the sex and phenotype status and specify the number of threads PLINK may use. We then generate PLINK files, including a BED, BIM and FAM file (see the [PLINK file format reference](https://www.cog-genomics.org/plink/1.9/formats) for details on those filetypes; note that a PLINK .bed has nothing to do with the UCSC Genome Browser's BED format).
 
   ```bash
   plink2 --vcf "$VCF" --double-id \
@@ -228,7 +238,7 @@ The container holds the tools but not the data (the reference panels are around 
   |---|---|---|---|---|---|
   00000301_2-375928.CEL |  00000301_2-375928.CEL  | 2   |    1   |    PROBLEM | 0.9987
 
-  Plot a histogram of F, with the two cutoffs marked. In a clean cohort you see two tight groups, one at each end, and almost nothing in the middle.
+  Plot a histogram of F, with the two cutoffs marked. In a clean cohort you see two tight groups, one at each end, and almost nothing in the middle.  
   <img src="figures/sex_fstat.png" alt="Sex check F statistic" width="400">
 
   Remove the samples flagged PROBLEM. For us, this removed 50 samples, leaving 928. That is about 5%, which is more than you would like to see: 32 samples reported male came out female and 18 reported
@@ -246,7 +256,7 @@ The container holds the tools but not the data (the reference panels are around 
   In our data, 50 samples were flagged as "PROBLEM", this is 5% of our entire sample size, which is quite high. 32 samples reported male came out as female, and 18 samples the other way around. This relatively symmetric split points at labelling errors, so if you notice something similar in your data, assess how the plates were prepared. We will remove those samples, which means we are left with 928 samples in total. 
 
   ### 1.3 Preliminary PCA and heterozygosity  
-  Excess heterozygosity indicates that the DNA from two people were mixed in one tube. How much heterozygosity is normal differs by ancestry, so in an admixed cohort a single cohort-wide threshold could flag ancestry groups instead of bad samples. We will therefore split individuals into broad ancestry clusters first and then within each cluster compare each sample with the heterozygosity mean of the cluster. Note that here, we only remove excess * *heterozygosity* * (i.e. the high tail of the distribution), since more homozygous individuals would point towards consanguinity, not a bad sample. Note that for a genetically homogeneous cohort (e.g. European), you can skip this clustering step and use one cohort-wide mean. 
+  Excess heterozygosity indicates that the DNA from two people were mixed in one tube. How much heterozygosity is normal differs by ancestry, so in an admixed cohort a single cohort-wide threshold could flag ancestry groups instead of bad samples. We will therefore split individuals into broad ancestry clusters first and then within each cluster compare each sample with the heterozygosity mean of the cluster. Note that here, we only remove excess  *heterozygosity*  (i.e. the high tail of the distribution), since more homozygous individuals would point towards consanguinity, not a bad sample. Note that for a genetically homogeneous cohort (e.g. European), you can skip this clustering step and use one cohort-wide mean. 
 
   In the following command, we use PLINK to:
   - Prune (drop) one of every correlated variant pairs at r2 > 0.2, using a sliding window the size of 200 variants, and steps of 50 variants. We restrict our pruning to the autosomes and common (MAF >
@@ -345,7 +355,6 @@ The container holds the tools but not the data (the reference panels are around 
   ```
   For us, the strict missingness filter removed 9,120 variants, and the differential missingness filter 3 more, leaving 854,354 variants. 
 
-  ```
 
   ### 1.6 Hardy-Weinberg equilibrium
   Hardy-Weinberg equilibrium is the genotype frequency you expect from the allele frequency if mating is random. A variant that departs from it sharply is usually a genotyping error, so we apply it as a
