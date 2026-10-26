@@ -54,7 +54,7 @@ The container holds the tools but not the data (the reference panels are around 
 
   3. **Reference data**
      The reference data is not in the above container since it changes versions often. You can fetch what you need from this table:
-     | What | Used in | Where |
+| What | Used in | Where |
 |---|---|---|
 | 1000 Genomes Phase 3 VCFs (GRCh37) and the panel file | 1.9 | [1000 Genomes FTP](https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/) |
 | `1000GP_Phase3_combined.legend.gz` | 1.8 | [Rayner tools](https://www.chg.ox.ac.uk/~wrayner/tools/) |
