@@ -27,8 +27,8 @@
   **3.3 PRSice-2**  
   **3.4 LDpred2**  
   **3.5 PRS-CS**  
-  **3.6 PRS-CSx** 
-  **3.7 PRS-CSx**  
+  **3.6 PRS-CSx**  
+  **3.7 BridgePRS**  
   **3.8 Validation of the PRS**  
 
 
