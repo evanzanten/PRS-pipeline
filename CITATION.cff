@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: If you use this pipeline, please cite it using these metadata.
+title: >-
+  From genotype data to polygenic risk scores: a practical end-to-end
+  guide for researchers without bioinformatics training
+abstract: >-
+Over the last decade, genome-wide association studies (GWAS) have provided substantial insights into the genetic architecture of complex diseases, facilitating the computation of polygenic risk scores (PRS). Since genetic data are currently collected frequently within biomedical cohorts, the opportunities for PRS-based research are substantial. However, computing a PRS requires a series of complex computational and methodological choices for which practical guidance remains fragmented, particularly for researchers without specialized bioinformatics training. Existing tutorials typically assume familiarity with command-line tools and focus on cohorts of European ancestry. Here, we provide an end-to-end protocol going from raw SNP array data to a validated PRS, covering preparation, quality control, ancestry assessment, imputation, GWAS and method selection, PRS calculation, validation, and reporting. For each step, we provide concrete default choices and indicate where these choices could be adapted to the cohort, the available GWAS, and the research question, with particular attention to non-European cohorts. We illustrate every step in an admixed Brazilian ischemic stroke cohort, showing what the output may look like and where common pitfalls arise, such as sample mix-ups and ancestry-driven artefacts. All scripts are provided in a reproducible, containerized pipeline. This protocol thereby enables researchers to make better use of genetic data collected alongside clinical and population cohorts.
+authors:
+  - Eva S. van Zanten
+type: software
+license: MIT
+repository-code: https://github.com/evanzanten/PRS-pipeline
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23159078
+    description: Concept DOI, always resolving to the latest version
+keywords:
+  - polygenic risk score
+  - genotype quality control
+  - imputation
+  - multi-ancestry
+  - reproducibility
