@@ -28,23 +28,36 @@ QC and PRS computation. The pipeline needs two short R scripts, pca_clusters.R a
 **3.4 LDpred2**  
 **3.5 PRS-CS**  
 **3.6 PRS-CSx**  
-**3.7 BridgePRS**  
-**3.8 Validation of the PRS**  
+**3.7 Validation of the PRS**  
 
 
 ### Preparation
 
 1. **Software, data and programming languages**
-   Every tool this pipeline uses is in one Apptainer (Singularity) image, at one set of pinned versions, so that a rerun a year from now means something. The recipe is `container/pipeline.def` and the
-version table is in [SOFTWARE.md](SOFTWARE.md); the two are kept in step with each other. Pull the prebuilt image:
+   This pipeline calls on a dozen separate programs, and if one of them is a different version from the one we used, your numbers can quietly
+differ from ours. So we packaged everything into a *container*: one file holding every tool at a fixed version, already installed. You install
+nothing yourself and you do not need admin rights.
 
 ```bash
 apptainer pull genotype-qc.sif oras://ghcr.io/evanzanten/prs-pipeline:latest
 ```
-The key versions, all in the image: PLINK 1.90b7.11 (2023-12-11), PLINK 2.00a3.7 (2022-10-24), bcftools/HTSlib 1.18, Beagle 5.5 (27Feb25.75f), PRSice-2 2.3.5, and R 4.3.2 with data.table 1.14.10,
-ggplot2 3.4.4 and scales 1.3.0 from a dated CRAN snapshot. The coding itself is done in bash, and we make the figures in R.
 
-The container holds the tools but not the data (the reference panels are around 20 GB each, they are public, and they change on their own schedule). To choose the right reference panel, we refer to our paper section 4.1.
+That gives you a single file of about 0.6 GB. Put `apptainer exec genotype-qc.sif` in front of any command in this guide and it runs inside the container:
+
+```bash
+apptainer exec genotype-qc.sif plink2 --version
+```
+
+Inside are PLINK 1.9 and PLINK 2, bcftools, Beagle, PRSice-2, PRS-CS, PRS-CSx, and R 4.3.2 with its packages installed from a dated CRAN
+snapshot so that a rebuild gets the same versions. [SOFTWARE.md](SOFTWARE.md) lists every tool, its version, what it does here and which
+section uses it, and `container/pipeline.def` is the recipe the image is built from. One version does not match: the exact PLINK 2 build our
+results came from is no longer distributed, so the image pins a current one. SOFTWARE.md explains why, and it is why the archived image rather
+than a rebuild is the reproducible artifact.
+
+Not inside: the reference data. Those are public datasets of 3 to 29 GB that change on their own schedule, so you download them separately. The
+table above says where, and section 4.1 of our paper covers how to choose the right one.
+
+The commands in this guide are bash. The figures are made in R.
 
 
 2. **Input data**
@@ -66,7 +79,6 @@ stroke GWAS in 986 Brazilian individuals (513 cases, 473 controls).
 | Beagle `.jar`, bref3 panel, genetic maps | 2 | [Beagle](https://faculty.washington.edu/browning/beagle/), [bref3](https://bochet.gcc.biostat.washington.edu/beagle/1000_Genomes_phase3_v5a/b37.bref3/), [maps](https://bochet.gcc.biostat.washington.edu/beagle/genetic_maps/) |
 | LDpred2 HapMap3+ LD reference (14 GB) | 3.4 | [figshare](https://figshare.com/articles/dataset/LD_reference_for_HapMap3_/21305061) |
 | PRS-CS / PRS-CSx LD panels | 3.5, 3.6 | [PRS-CS](https://github.com/getian107/PRScs), [PRS-CSx](https://github.com/getian107/PRScsx) |
-| BridgePRS | 3.7 | [BridgePRS](https://github.com/clivehoggart/BridgePRS) |
 | Your GWAS summary statistics | 3.1 | [GWAS Catalog](https://www.ebi.ac.uk/gwas/home) |
 
 
@@ -819,7 +831,6 @@ them all here.
 | imputed.pgen | dosages | PLINK | calculating the final scores of every method |
 | imputed_bgen.bgen | dosages | PRSice-2 | clumping and scoring |
 | imputed_variants.bim | variant list only | PRS-CS, PRS-CSx, LDpred2 | to know which variants we have |
-| imputed.pvar | variant list | BridgePRS | it renames every variant from this, and builds its own reference (3.7) |
 
 All methods keep the genotype dosages. PRS-CS, PRS-CSx and LDpred2 do not look at the genotypes themselves but just make a list of the variants that overlap between the GWAS, LD reference panel, and our
 cohort/target file, and for these variants work out the weights. This means they only need to know which variants we have, hence a .bim file. As output, these tools give weights which we then apply to
@@ -1073,91 +1084,7 @@ done
 ```
 
 
-### 3.7 BridgePRS
-Again, we derive PRS for two different ancestries, but BridgePRS works a bit differently from PRS-CS. It fits the European arm first and uses it as a prior for the African arm instead of running each ancestry in parallel and leaving you to weigh the scores. This is useful when one of the ancestries is small in the GWAS, and for us, the African arm in GIGASTROKE contains 894 cases while the European arm contains 62,100 cases, so the European arm is way larger. However, the coding work for BridgePRS is far more challenging and lengthy than the other PRS methods. So if you're up for a challenge, be BridgePRS's guest. In short, It wants its own linkage-disequilibrium reference as PLINK filesets split by chromosome, its own block definitions, and it names every variant `chromosome:position:reference:alternate`, so your genotypes, your summary statistics and the reference must all be renamed to match before anything will line up.
-
-```bash
-BR=$OUT/bridgeprs                     # BridgePRS wants a working tree of its own
-mkdir -p "$BR"/{sumstats,ldref,blocks,out}
-
-# Names first: one table from rsID to the name BridgePRS uses, then everything
-# else derived from it.
-awk '!/^#/ {print $3"\t"$1":"$2":"$4":"$5}' "$OUT/imputed.pvar" > "$BR/rsid_to_id.txt"
-cut -f2 "$BR/rsid_to_id.txt" > "$BR/qc_snplist.txt"
-awk '!/^#/ {print $1"\t"$2"\t"$2"\t"$1":"$2":"$4":"$5}' "$OUT/imputed.pvar" > "$BR/ranges.txt"
-
-awk 'NR>1 && $3=="EUR" {print $1"\t"$1}' "$KG_PANEL" > "$BR/EUR_IDs.txt"
-awk 'NR>1 && $3=="AFR" {print $1"\t"$1}' "$KG_PANEL" > "$BR/AFR_IDs.txt"
-
-# The summary statistics, renamed and split per chromosome.
-for arm in eur afr; do
-  awk 'FNR==NR {id[$1]=$2; next}
-       FNR==1  {print "SNP\tCHR\tBP\tA1\tA2\tBETA\tSE\tP"; next}
-       ($1 in id) {print id[$1]"\t"$2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7"\t"$8}' \
-      "$BR/rsid_to_id.txt" "$OUT/sumstats_${arm}.txt" > "$BR/sumstats/${arm}_all.tsv"
-  for chr in $(seq 1 22); do
-    awk -v c=$chr 'NR==1 || $2==c' "$BR/sumstats/${arm}_all.tsv" \
-      | gzip -c > "$BR/sumstats/${arm}.chr${chr}.tsv.gz"
-  done
-done
-```
-
-The LD reference panel comes from the 1000 Genomes VCF (per chromosome) but do not have variant names so we select by position and name everything the way BridgePRS wants it: 
-```bash
-plink2 --vcf "$KG_DIR/ALL.chr${chr}.phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz" \
-  --double-id --extract range "$BR/ranges.txt" --snps-only just-acgt --max-alleles 2 \
-  --set-all-var-ids '@:#:$r:$a' --rm-dup force-first \
-  --threads 4 --make-bed --out "$BR/ldref/chr${chr}"
-```
-
-BridgePRS wants to build the LD blocks itself instead of using an external LD panel: 
-```bash
-plink --bfile "$BR/ldref/chr${chr}" --chr ${chr} \
-      --keep "$BR/EUR_IDs.txt" --extract "$BR/qc_snplist.txt" --maf 0.001 \
-      --blocks 'no-pheno-req' 'no-small-max-span' \
-      --blocks-min-maf 0.001 --blocks-strong-lowci 0.51 --blocks-strong-highci 0.831 \
-      --blocks-recomb-highci 0.55 --blocks-max-kb 500 --blocks-inform-frac 0.1 \
-      --threads 4 --out "$BR/blocks/chr${chr}"
-gzip -f "$BR/blocks/chr${chr}.blocks.det"
-```
-
-Let's run BridgePRS now: 
-```bash
-"$BRIDGE_DIR/src/Bash/BridgePRS_sumstat.sh" "$BRIDGE_DIR/src/Rscripts" \
-    --outdir "$BR/out" --blockdir "$BR/blocks" \
-    --by_chr 1 --by_chr_sumstats .tsv.gz --strand_check 1 \
-    --pop1 EUR --pop2 AFR --fst 0.15 \
-    --N_pop1 236506 --N_pop2 3423 \
-    --pop1_qc_snplist "$BR/qc_snplist.txt" --pop2_qc_snplist "$BR/qc_snplist.txt" \
-    --pop1_sumstats "$BR/sumstats/eur.chr" --pop2_sumstats "$BR/sumstats/afr.chr" \
-    --pop1_ld_bfile "$BR/ldref/chr" --pop1_ld_ids "$BR/EUR_IDs.txt" \
-    --pop2_ld_bfile "$BR/ldref/chr" --pop2_ld_ids "$BR/AFR_IDs.txt" \
-    --sumstats_snpID SNP --sumstats_p P --sumstats_beta BETA \
-    --sumstats_allele1 A1 --sumstats_allele0 A2 --sumstats_se SE \
-    --n_cores 16 --clean 0 --do_block 0 --do_pool 1
-```
-
-We get two weights files, `snp_weights_best_model.dat` and `snp_weights_weighted_model.dat`. Scoring needs the names mapped back, because the dosages have rsIDs and these carry positions. Sort the allele pair into the key so a file that lists the two alleles the other way round still matches.
-
-```bash
-awk '
-  function key(c,p,a,b) { return (a<b) ? c":"p":"a":"b : c":"p":"b":"a }
-  FNR==NR { if ($1 !~ /^#/) id[key($1,$2,$4,$5)] = $3; next }
-  FNR==1  { next }
-  { split($1, f, ":"); k = key(f[1], f[2], $2, $3)
-    if (k in id && $4 != 0) print id[k], $2, $4 }' \
-  <(grep -v '^##' "$OUT/imputed.pvar") "$BR/out/AFR/snp_weights_best_model.dat" \
-  > "$OUT/bridgeprs_weights.txt"
-
-plink2 --pfile "$OUT/imputed" --score "$OUT/bridgeprs_weights.txt" 1 2 3 \
-       --threads $THREADS --out "$OUT/bridgeprs_score"
-```
-
-For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661 African reference individuals, 6,799,645 and 6,349,225 renamed summary statistics. Out of 1,726,521 pooled weights, 1,415,252 were non-zero and every one of them was found in our dosages.
-
-
-
-### 3.8 Validation of the PRS
+### 3.7 Validation of the PRS
 
 Each method gives every individual a score, and two of them leave a choice open: which p-value threshold to use for PRSice-2, and how much weight to give each of the two ancestry scores of PRS-CSx. If we
 make that choice and then check how well it does in the same people, the result is too optimistic, since we picked the winner using their phenotypes. This is also why we do not use the R2 that PRSice
@@ -1174,7 +1101,7 @@ We do this with five-fold cross-validation, which works as follows in our cohort
 2. Put one group aside and use only the other four to choose whatever the method leaves open:
    - PRSice-2 gives us 11 scores, one per p-value threshold from 5e-08 to 1. We fit the two regressions above at each threshold in those four groups, and keep the threshold where the PRS adds the most.
    - PRS-CSx gives us one score per ancestry. We fit a logistic regression on both at once in those four groups, which decides how much weight each ancestry gets.
-   - LDpred2, PRS-CS and BridgePRS have nothing to choose, so for them this step does nothing.
+   - LDpred2 and PRS-CS have nothing to choose, so for them this step does nothing.
 3. Apply that choice to the group we put aside, and keep those scores. This is the whole point: the choice was made without ever seeing the phenotypes of these individuals.
 4. Repeat until every group has been put aside once.
 5. Everyone now has a score from a model that never saw their own phenotype. We put all 880 of those scores in one column, fit the two regressions on all 880 at once, and report the difference in
@@ -1208,7 +1135,6 @@ d <- add_score(d, "ldpred2", "ldpred2_score.sscore")
 d <- add_score(d, "prscs",   "prscs_score.sscore")
 d <- add_score(d, "csx_EUR", "prscsx_EUR_score.sscore")
 d <- add_score(d, "csx_AFR", "prscsx_AFR_score.sscore")
-d <- add_score(d, "bridge",  "bridgeprs_score.sscore")
 
 #PRSice puts all its thresholds in one file and repeats the ID in an FID column, so we drop FID
 #while reading it in (leaving it in gives us two ID columns and the merge breaks)
@@ -1217,7 +1143,7 @@ thresholds <- setdiff(names(prsice), "IID")
 d <- merge(d, prsice, by = "IID")
 
 #Let's scale the PRS to a mean of 0 and a standard deviation of 1:
-SCORES <- c("ldpred2", "prscs", "bridge", "csx_EUR", "csx_AFR", thresholds)
+SCORES <- c("ldpred2", "prscs", "csx_EUR", "csx_AFR", thresholds)
 for (s in SCORES) d[[s]] <- scale(d[[s]])[, 1]
 
 
@@ -1276,11 +1202,10 @@ run <- function(name, tune) {
 ##Now let's apply all of this to our PRS methods!
 set.seed(1)   #so that the folds come out the same way every time we run it
 
-#LDpred2, PRS-CS and BridgePRS have nothing we need to choose, so we just read the score off as it is and
+#LDpred2 and PRS-CS have nothing we need to choose, so we just read the score off as it is and
 #ignore the training rows. This is also why their standard deviation below is exactly zero.
 run("LDpred2", function(train, held_out) d$ldpred2[held_out])
 run("PRS-CS",  function(train, held_out) d$prscs[held_out])
-run("BridgePRS", function(train, held_out) d$bridge[held_out])
 
 
 #PRSice: we try every threshold in the training rows and keep the one that adds the most. Note
@@ -1310,13 +1235,15 @@ For us this gives:
 | PRS-CS | 1,082,514 | 0.0150 | 0.603 |
 | PRSice-2 | 238,218 after clumping | 0.0109 (sd 0.0049) | 0.597 |
 | PRS-CSx (EUR+AFR) | 1,082,514 and 914,618 | 0.0068 (sd 0.0022) | 0.591 |
-| BridgePRS | 1,415,252 | 0.0049 | 0.588|
 
 
 Note that our covariates on their own already give an AUC of 0.578, so that is the baseline that a PRS would need to add to (this includes age, sex and the first 10 PCs) 
 
+A note on BridgePRS: we ran the tool, but we are leaving it out of the pipeline since the coding is very lengthy and way more challenging than the other methods. For completeness: it reached an incremental Nagelkerke R2 of 0.0049 and an AUC of 0.588, beating 93.0% of the noise scores described below, which is the
+weakest of the five methods we tried.
+
 The R2 metrics of PRSice-2 and PRS-CSx have a standard deviation (the other methods do not), since PRSice-2 and PRS-CSx are tuned inside each fold, so their result depends on how the split happened to fall, and the standard deviation tells us how
-much a single five-fold run would move around. LDpred2, PRS-CS and BridgePRS need no tuning, so the same score is used in every fold and their standard deviation is exactly zero by construction. That is a property
+much a single five-fold run would move around. LDpred2 and PRS-CS need no tuning, so the same score is used in every fold and their standard deviation is exactly zero by construction. That is a property
 of the procedure, not a sign that they are measured more precisely.
 
 **Do check that your PRS beats random noise.** Since the regression coefficients are fitted in the same 880 people that we then measure the R2 in, adding any column at all buys us a little bit of R2,
@@ -1369,7 +1296,7 @@ cat(sprintf("90th   R2 %.4f   AUC %.3f\n", quantile(res[, "r2"], 0.9),
                                            quantile(res[, "auc"], 0.9)))
 
 #For each PRS method we used, we compare the percentage of null scores each method beats in terms of the R2.
-for (m in c("LDpred2", "PRS-CS", "PRSice-2", "PRS-CSx", "BridgePRS"))
+for (m in c("LDpred2", "PRS-CS", "PRSice-2", "PRS-CSx"))
   cat(sprintf("%-10s beats %.1f%% of the null scores\n", m,
               100 * mean(res[, "r2"] < RESULTS$r2[RESULTS$method == m])))
 ```
@@ -1381,7 +1308,7 @@ for (m in c("LDpred2", "PRS-CS", "PRSice-2", "PRS-CSx", "BridgePRS"))
 | noise, median | 0.0006 | 0.579  |
 | noise, 90th percentile | 0.0038 | 0.585 |
 
-Compared to that, LDpred2 and PRS-CS are above 99.95% of the noise scores, PRSice-2 above 99.3%, PRS-CSx above 96.9%, and BridgePRS above 93.0%.
+Compared to that, LDpred2 and PRS-CS are above 99.95% of the noise scores, PRSice-2 above 99.3%, and PRS-CSx above 96.9%.
 
 Both figures together look like this:
 
@@ -1395,7 +1322,7 @@ Both figures together look like this:
 </table>
 
 
-That check just costs you around 15 minutes and is a nice sanity check that we recommend. So run your pipeline once on a set of randomly shuffled weights, and if your real PRS does not beat these random PRS by a wide margin, then your PRS brings nothing to the table. This check is suitable in case you used methods where you didn't have to make any choice on the parameters (PRS-CS, LDpred2 and BridgePRS), since their score is fixed. In case you used PRSice-2 and PRS-CSx you would, strictly speaking, need to shuffle the case/control labels and go through the cross-validation again, which we did not do here. 
+That check just costs you around 15 minutes and is a nice sanity check that we recommend. So run your pipeline once on a set of randomly shuffled weights, and if your real PRS does not beat these random PRS by a wide margin, then your PRS brings nothing to the table. This check is suitable in case you used methods where you didn't have to make any choice on the parameters (PRS-CS and LDpred2), since their score is fixed. In case you used PRSice-2 and PRS-CSx you would, strictly speaking, need to shuffle the case/control labels and go through the cross-validation again, which we did not do here. 
 
 Your next question, looking at the numbers in the table above with the R2 and AUC per method, could be why the R2 is so low. Do note that you have to interpret this R2 relative to the maximum heritability it CAN capture, which is between ~0.05-~0.07 as estimated by LDSC and LDpred2, respectively. So it isn't that low after all. Look at one of our winning methods, LDpred2, which has an R2 of 0.0153 and an AUC of 0.603. LDPred2-auto estimated that about 1% of variants carry a real effect, so that would be around 12K out of the 1.19 million we put in. It merely shrunk all variants but kept all the information, while a worse-performing tool like PRSice-2 throws away A LOT of variants and therefore contains less information, and that shows. In conclusion, our winning methods are LDpred2 and PRS-CS, which both explain around 1.5% of the variation in case/control status, which sounds small but should be read against the ceiling (the SNP heritability of ischemic stroke in our data is around 5-7%). 
 
