@@ -712,7 +712,7 @@ Rscript figures.R imputation
 <table>
   <tr>
     <td><img src="figures/imputation_dr2.png" width="100%"></td>
-    <td><img src="figures/imputation_dr2_maf.png" width="100%"></td>
+    <td><img src="figures/imputation_dr2_maf_linear.png" width="100%"></td>
   </tr>
   <tr>
     <td align="center"><em>DR2 across all imputed variants. Dashed: the 0.8 cutoff</em></td>
@@ -819,7 +819,7 @@ Rscript match_sumstats.R
   | imputed.pgen | dosages | PLINK | calculating the final scores of every method |
   | imputed_bgen.bgen | dosages | PRSice-2 | clumping and scoring |
   | imputed_variants.bim | variant list only | PRS-CS, PRS-CSx, LDpred2 | to know which variants we have |
-  | `imputed.pvar` | BridgePRS | it renames every variant from this, and builds its own reference (3.7) |
+  | imputed.pvar | variant list | BridgePRS | it renames every variant from this, and builds its own reference (3.7) |
 
   All methods keep the genotype dosages. PRS-CS, PRS-CSx and LDpred2 do not look at the genotypes themselves but just make a list of the variants that overlap between the GWAS, LD reference panel, and our
   cohort/target file, and for these variants work out the weights. This means they only need to know which variants we have, hence a .bim file. As output, these tools give weights which we then apply to
@@ -1178,8 +1178,8 @@ For us, we had 8,821,285 reference variants, 14,299 blocks, 503 European and 661
   3. Apply that choice to the group we put aside, and keep those scores. This is the whole point: the choice was made without ever seeing the phenotypes of these individuals.
   4. Repeat until every group has been put aside once.
   5. Everyone now has a score from a model that never saw their own phenotype. We put all 880 of those scores in one column, fit the two regressions on all 880 at once, and report the difference in
-  Nagelkerke R2 plus the AUC of the second model. Note that we use everybody here: the folds have already done their job, and an R2 from one group of 176 people would be far noisier than one estimate over
-  880.
+  Nagelkerke R2 plus the AUC of the second model. Note that we use everybody here: the folds have already done their job, and an R2 from one group of 176 people would be far noisier than one estimate over 880.
+
 
   Note what does and does not get recomputed here. The PRS itself is computed once, before all of this, and never again: the weights come from the GWAS and PLINK applies them to our dosages. The folds only
   pick between scores that already exist (PRSice-2) or work out how to combine them (PRS-CSx). This is only possible because the weights never used our phenotypes to begin with. If a method estimated its
