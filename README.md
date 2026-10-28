@@ -96,6 +96,7 @@ Set these once, every command below uses these variables.
 SEED=1
 THREADS=4
 OUT=/path_to_output
+FIG=/path_to_figures
 VCF=/path_to_vcf/genotypes.vcf.gz
 PHENO=/path_to_metadata/phenotypes.txt
 ```
@@ -263,6 +264,8 @@ We first use awk to create a textfile with the samples that need to be removed. 
 awk 'NR>1 && $5=="PROBLEM" {print $1"\t"$2}' "$OUT/sexcheck.sexcheck" > "$OUT/to_be_removed_sex.txt"
 
 plink2 --bfile "$OUT/sample_missingn" --remove "$OUT/to_be_removed_sex.txt" --threads $THREADS --make-bed --out "$OUT/sex_check_finished"
+
+Rscript figures.R sex
 ```
 In our data, 50 samples were flagged as "PROBLEM", this is 5% of our entire sample size, which is quite high. 32 samples reported male came out as female, and 18 samples the other way around. This relatively symmetric split points at labelling errors, so if you notice something similar in your data, assess how the plates were prepared. We will remove those samples, which means we are left with 928 samples in total. 
 
@@ -297,7 +300,9 @@ plink2 --bfile "$OUT/sex_check_finished" --extract "$OUT/pruned_longrange_ld.pru
 # heterozygosity is more than 3 SD above the mean of their own cluster. It writes two files:
 # het_outliers.txt, which the next command removes, and clusters.txt, which step 1.6 reads.
 # For us it found clusters of 626, 243 and 59 individuals, and flagged 4 overly heterozygous outliers.
+
 Rscript pca_clusters.R clusters
+Rscript figures.R pca_het 
 
 plink2 --bfile "$OUT/sex_check_finished" --remove "$OUT/het_outliers.txt" --threads $THREADS --make-bed --out "$OUT/het_finished"
 ```
