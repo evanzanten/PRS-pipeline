@@ -485,6 +485,8 @@ perl "$CHECK_BIM" -b "$OUT/MAF.bim" -f "$OUT/check_freq.frq" -r "$LEGEND" -g -p 
 to our cohort. Then apply the lists, in this order:
 
 ```bash
+#Note that the perl script writes all its outputs in the same directory as the .bim file you supplied as input, so Exclude-MAF-1000G.txt and FreqPlot-MAF-1000G.txt appear in $OUT. The second file is
+# what `Rscript figures.R harmonization` reads.
 plink --bfile "$OUT/MAF" --exclude "$OUT/Exclude-MAF-1000G.txt" --threads "$THREADS" \
       --make-bed --out "$OUT/variants_in_reference"
 plink --bfile "$OUT/variants_in_reference" --update-chr "$OUT/Chromosome-MAF-1000G.txt" \
