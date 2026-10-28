@@ -4,7 +4,7 @@
 
 
 **This GitHub is created alongside our paper on PRS computation for non-bioinformaticians. We go through the pipeline in the order described in the paper, starting with some preparation steps, followed by
-QC and PRS computation. The pipeline needs two short R scripts, pca_clusters.R and match_sumstats.R, both of which are in this repository.**
+QC and PRS computation. The pipeline includes three short R scripts needs two short R scripts (pca_clusters.R, match_sumstats.R, and figures.R) which are included in this repository.**
 
 ## Contents
 
@@ -50,11 +50,10 @@ apptainer exec genotype-qc.sif plink2 --version
 
 Inside are PLINK 1.9 and PLINK 2, bcftools, Beagle, PRSice-2, PRS-CS, PRS-CSx, and R 4.3.2 with its packages installed from a dated CRAN
 snapshot so that a rebuild gets the same versions. [SOFTWARE.md](SOFTWARE.md) lists every tool, its version, what it does here and which
-section uses it, and `container/pipeline.def` is the recipe the image is built from. One version does not match: the exact PLINK 2 build our
-results came from is no longer distributed, so the image pins a current one. SOFTWARE.md explains why, and it is why the archived image rather
-than a rebuild is the reproducible artifact.
+section uses it. Note that the exact PLINK 2 build our
+results came from is no longer distributed, so the image pins a current one. *The image is built specifically for Linux x86_64 binaries and does not work on MacOS (arm64), so run the pipeline on a Linux-based cluster or virtual machine if you normally work on a Mac system*
 
-Not inside: the reference data. Those are public datasets of 3 to 29 GB that change on their own schedule, so you download them separately. The
+The reference data is not in the container. Those are public datasets of 3 to 29 GB that change on their own schedule, so you download them separately. The
 table above says where, and section 4.1 of our paper covers how to choose the right one.
 
 The commands in this guide are bash. The figures are made in R.
@@ -336,11 +335,11 @@ plink2 --bfile "$OUT/het_finished" --extract "$OUT/pruned_longrange_ld.prune.in"
 plink2 --bfile "$OUT/het_finished" --remove "$OUT/remove_related_individuals.king.cutoff.out.id" \
      --threads $THREADS --make-bed --out "$OUT/unrelated_individuals"
 ```
-Let's look at the count within each band. We now have 924 samples and a total of 417,241 sample pairs to be tested.
+Let's look at the count within each band. We now have 924 samples and a total of 426,426 sample pairs to be tested.
 
 |Threshold|Count|
 |---|---|
-|<0.0442|       426,426|
+|<0.0442|       426,345|
 |0.0442-0.0884|26|
 |0.0884-0.177|14|
 |0.177-0.354|33|
@@ -584,7 +583,7 @@ cut -f2 "$OUT/pca_cohort_shared.bim" > "$OUT/shared_variants.txt"
 plink2 --bfile "$OUT/kg_reference" --extract "$OUT/shared_variants.txt" --threads $THREADS \
        --make-bed --out "$OUT/kg_reference_shared"
 ```
-Now we have two datasets: one for our cohort and one for 1000 Genomes, containing the pruned variants that are in both datasets. For us, all 104,471 variants that we had as output in step 1, were also in
+Now we have two datasets: one for our cohort and one for 1000 Genomes, containing the pruned variants that are in both datasets. For us, all 104,478 variants that we had as output in step 1, were also in
 the 1000 Genomes data. We merge both files together:
 ```bash
 plink --bfile "$OUT/pca_cohort_shared" --bmerge "$OUT/kg_reference_shared" \
