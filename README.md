@@ -285,11 +285,9 @@ plink2 --bfile "$OUT/sex_check_finished" --autosome --maf 0.05 \
 ```
 This left us with 109,774 variants out of 863,477, written to pruned_longrange_ld.prune.in.
 
-Instead of a fixed list, the long-range LD regions can be found in your own data. `snp_autoSVD` in
-the bigsnpr package clumps on LD and then repeatedly computes the PCs, drops the variants that load
+Long-range LD regions can also be estimated from your own data using the 'snp_autoSVD' function in the bigsnpr package, which clumps on LD and then repeatedly computes the PCs, drops the variants that load
 too heavily on any one of them, and starts again, until nothing is left to drop. The advantage is
-that it catches regions that are specific to your cohort and that no published list knows about; the
-cost is an R dependency in a section that is otherwise pure PLINK.
+that it catches regions that are specific to your cohort and that no published list knows about. It is just one more dependency in this section that is otherwise pure PLINK. 
 
 ```r
 library(bigsnpr)
@@ -312,7 +310,7 @@ On our data this keeps 129,930 of the 307,934 autosomal common variants, and it 
 long-range LD region, not the two dozen in the Price list. It keeps more variants than the
 PLINK route above (129,930 against 109,774), mostly because its clumping step is gentler than
 `--indep-pairwise 200 50 0.2`, not because it excludes less. **Every count quoted from here on comes
-from the PLINK route**, so if you take this one your numbers will differ from ours throughout.
+from the PLINK route**.
 
 We use only the first two principal components, since we want a coarse split into groups, not an ancestry assignment (we leave that for section 1.9). We use PLINK's randomised PCA algorithm (approx).
 PLINK recommends it only above 5,000 samples and we have fewer, but it is much faster than the exact algorithm, and the difference between the two is far smaller than the spread of the clusters, so it
