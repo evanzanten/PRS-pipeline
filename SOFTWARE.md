@@ -39,7 +39,7 @@
 
   ## Why two versions of PLINK
 
-  PLINK 2 is a rewrite, not an update, and a few things in PLINK 1.9 were not
+  PLINK 2 not an update but more of a rewrite, and a few things in PLINK 1.9 were not
   carried across. This pipeline uses PLINK 2 everywhere it can, and PLINK 1.9
   only for `--check-sex` in 1.2, `--test-missing` in 1.5, and `--flip` and
   `--freq --keep-allele-order` in 1.8.
@@ -51,9 +51,8 @@
 
   ## What is not in the container
 
-  These are data, not software. They are tens of gigabytes and change on their
-  own schedule:
-
+  The data hereunder is not included since they are tens of GB and change often: 
+  
   | What | Size | Used by |
   |------|------|---------|
   | 1000 Genomes Phase 3 VCFs, GRCh37 | ~15 GB | 1.9 |
